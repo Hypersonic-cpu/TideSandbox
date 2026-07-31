@@ -39,6 +39,8 @@ struct MosaicGridView: View {
             .contentShape(Rectangle())
             .gesture(pointerGesture(mapping: mapping))
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("2D mosaic viewport")
         .accessibilityIdentifier("mosaic-grid")
     }
 

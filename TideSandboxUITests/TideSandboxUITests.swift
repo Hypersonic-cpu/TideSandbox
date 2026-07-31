@@ -102,6 +102,33 @@ final class TideSandboxUITests: XCTestCase {
     }
 
     @MainActor
+    func testViewportSwitchPreserves2DStateAndReturnsToMosaic() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        let modePicker = app.descendants(matching: .any)["viewport-mode-picker"]
+        let mosaic = app.descendants(matching: .any)["mosaic-grid"]
+        let placeholder = app.descendants(matching: .any)["height-field-3d-placeholder"]
+        XCTAssertTrue(modePicker.waitForExistence(timeout: 8))
+        XCTAssertTrue(mosaic.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitForValue("32 × 32", identifier: "grid-diagnostic", in: app))
+
+        modePicker.radioButtons.matching(
+            NSPredicate(format: "label == %@", "3D")
+        ).firstMatch.click()
+        XCTAssertTrue(placeholder.waitForExistence(timeout: 3))
+        XCTAssertFalse(mosaic.exists)
+        XCTAssertTrue(waitForValue("32 × 32", identifier: "grid-diagnostic", in: app))
+
+        modePicker.radioButtons.matching(
+            NSPredicate(format: "label == %@", "2D")
+        ).firstMatch.click()
+        XCTAssertTrue(mosaic.waitForExistence(timeout: 3))
+        XCTAssertFalse(placeholder.exists)
+        XCTAssertTrue(waitForValue("32 × 32", identifier: "grid-diagnostic", in: app))
+    }
+
+    @MainActor
     func testSavedSceneSurvivesRelaunchInGallery() throws {
         let app = XCUIApplication()
         app.launchEnvironment["WATER_SANDBOX_STORAGE_NAMESPACE"] = "PersistenceRelaunch"

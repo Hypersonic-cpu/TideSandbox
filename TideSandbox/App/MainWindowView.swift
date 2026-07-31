@@ -10,7 +10,7 @@ struct MainWindowView: View {
     var body: some View {
         HStack(spacing: 0) {
             ZStack(alignment: .top) {
-                MosaicGridView(model: model)
+                SimulationViewport(model: model)
                 simulationToolbar
                     .padding(14)
             }
@@ -185,6 +185,13 @@ private struct InspectorView: View {
 
     private var displaySection: some View {
         InspectorSection(title: "Display", systemImage: "square.grid.3x3") {
+            Picker("View", selection: $model.viewportMode) {
+                ForEach(ViewportMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("viewport-mode-picker")
             Picker("Quantity", selection: Binding(
                 get: { model.displayMode },
                 set: model.selectDisplayMode

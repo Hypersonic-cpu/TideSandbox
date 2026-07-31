@@ -213,3 +213,23 @@ Complete product XCTest: 28/28 passed
 Normally signed UI suite: 7/7 passed, 99.313 s
 Strict baseline recorder: passed with warnings as errors
 ```
+
+## 2026-08-01 — 3D Phase 1 viewport abstraction complete
+
+- Added the closed `ViewportMode` enum to the existing view model and a small
+  `SimulationViewport` switch. The 2D branch still instantiates the original
+  `MosaicGridView` without sharing or replacing its raster implementation.
+- Added a compact 2D/3D segmented picker. The launch default remains 2D, and
+  changing modes does not invoke load, reset, pause, stepping, persistence, or
+  dirty-state paths.
+- Added explicit semantic accessibility elements for both viewport branches and
+  a UI test that verifies 2D → 3D placeholder → 2D switching while the 32 × 32
+  grid diagnostic remains unchanged.
+
+Verification:
+
+```text
+Complete product XCTest: 28/28 passed
+Normally signed UI suite: 8/8 passed, 112.577 s
+Existing 2D implementation: retained in MosaicGridView.swift
+```
