@@ -193,3 +193,23 @@ window-only bilinear capture showed a smooth scalar field beneath cell-aligned
 grid lines, a readable Sampling picker, and no overlap or clipping in the
 floating toolbar or inspector. Signed UI automation exercised all four policies
 without changing the 32 × 32 Engine diagnostic.
+
+## 2026-08-01 — 3D Phase 0 baseline locked
+
+- Locked the unchanged 2D product at commit `2c8341e` before introducing a
+  switchable viewport or any Metal source.
+- Added a reproducible fixed-step default-scene checkpoint. After 120 frames at
+  1/60 second, simulated time is 1.9999999999999978 s, volume is
+  997.94238066673302 m³, maximum depth is 1.0000000096825417 m, maximum speed is
+  9.1571385829100175e-08 m/s, and all 1024 cells remain wet.
+- Captured and inspected a 1960 × 1424 window-only default 2D screenshot after
+  play, pause, step, and reset. Its SHA-256 and result-bundle provenance are in
+  `Render3DBaseline.md`.
+
+Verification:
+
+```text
+Complete product XCTest: 28/28 passed
+Normally signed UI suite: 7/7 passed, 99.313 s
+Strict baseline recorder: passed with warnings as errors
+```
