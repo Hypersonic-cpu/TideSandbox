@@ -48,9 +48,9 @@ Friendly notes:
 - Prefer `assert`, debug assertions, precondition checks, and fail-fast behavior for programmer errors.
 - Prefer non-exception control flow in the Engine.
 - Suitable examples include `std::span`, `std::jthread`, `std::barrier`, `std::latch`, concepts, ranges where they do not obscure hot loops, `constexpr`, `[[nodiscard]]`, and standard attributes.
-- Avoid inheritance-heavy designs, dependency-injection frameworks, service objects, registries, layers of adapters, and speculative backend abstraction.
+- Properly use inherit class whenever necessary.
 - Avoid excessive helper classes and tiny forwarding methods.
-- Avoid pervasive mutable elements when they can be const. Make ownership clear.
+- Avoid pervasive mutable elements when they can be const. Make ownership clear. Make constant `const` whenever possible.
 - Avoid hiding hot loops behind virtual dispatch, callbacks, or type-erased abstractions.
 - Avoid allocating during a solver substep.
 - Reuse scratch buffers.
@@ -188,7 +188,7 @@ Do not split files merely to match this tree. A smaller set of cohesive files is
 
 # Phase 1 — Pure C++ Engine
 
-- [ ] **Phase 1 complete**
+- [x] **Phase 1 complete**
 
 ## Goal
 
@@ -196,7 +196,7 @@ Build a deterministic pure C++ weakly nonlinear solver with a serial reference p
 
 ### 1.1 Mathematical scope and field layout
 
-- [ ] Lock the weakly nonlinear equations and MAC-style field layout.
+- [x] Lock the weakly nonlinear equations and MAC-style field layout.
 
 Requirements:
 
@@ -209,7 +209,7 @@ Requirements:
 
 ### 1.2 Contiguous grid storage
 
-- [ ] Implement the minimum contiguous row-major field types needed by the solver.
+- [x] Implement the minimum contiguous row-major field types needed by the solver.
 
 Requirements:
 
@@ -223,7 +223,7 @@ Requirements:
 
 ### 1.3 Simulation state and initialization
 
-- [ ] Implement state, physical dimensions, initialization, and reset.
+- [x] Implement state, physical dimensions, initialization, and reset.
 
 Requirements:
 
@@ -235,7 +235,7 @@ Requirements:
 
 ### 1.4 Solver configuration
 
-- [ ] Implement a compact validated solver configuration.
+- [x] Implement a compact validated solver configuration.
 
 Include:
 
@@ -252,7 +252,7 @@ Use SI-like units and conservative defaults.
 
 ### 1.5 Solver substep
 
-- [ ] Implement one complete weakly nonlinear substep.
+- [x] Implement one complete weakly nonlinear substep.
 
 Order:
 
@@ -276,7 +276,7 @@ Requirements:
 
 ### 1.6 CFL stepping
 
-- [ ] Implement characteristic-speed reduction and frame substepping.
+- [x] Implement characteristic-speed reduction and frame substepping.
 
 Requirements:
 
@@ -288,7 +288,7 @@ Requirements:
 
 ### 1.7 Multi-core execution
 
-- [ ] Implement persistent CPU parallel execution.
+- [x] Implement persistent CPU parallel execution.
 
 Requirements:
 
@@ -303,7 +303,7 @@ Requirements:
 
 ### 1.8 Diagnostics
 
-- [ ] Implement low-overhead diagnostics and reductions.
+- [x] Implement low-overhead diagnostics and reductions.
 
 Include:
 
@@ -320,7 +320,7 @@ Diagnostics must not require per-step heap allocation.
 
 ### 1.9 Terrain editing kernel
 
-- [ ] Implement brush and polygon terrain edits in pure C++.
+- [x] Implement brush and polygon terrain edits in pure C++.
 
 Brush:
 
@@ -838,4 +838,3 @@ Phase 5 is subsequent optimization work and is not required for the first correc
 - full nonlinear/conservative SWE;
 - cloud synchronization;
 - SwiftData unless the gallery later needs database-style querying.
-
