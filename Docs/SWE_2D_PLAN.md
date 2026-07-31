@@ -358,7 +358,7 @@ Preserve water depth h; surface elevation moves with the edited bed.
 
 # Phase 2 — Engine and terrain tests
 
-- [ ] **Phase 2 complete**
+- [x] **Phase 2 complete**
 
 ## Goal
 
@@ -366,7 +366,7 @@ Verify the numerical Engine before building the live UI. XCTest `.mm` files may 
 
 ### 2.1 Test target and helpers
 
-- [ ] Configure the Engine test target and minimal numerical comparison helpers.
+- [x] Configure the Engine test target and minimal numerical comparison helpers.
 
 Include:
 
@@ -379,7 +379,7 @@ Include:
 
 ### 2.2 Field layout tests
 
-- [ ] Verify dimensions, indexing, row/column orientation, non-square grids, and invalid preconditions.
+- [x] Verify dimensions, indexing, row/column orientation, non-square grids, and invalid preconditions.
 
 Primary sizes:
 
@@ -389,7 +389,7 @@ Primary sizes:
 
 ### 2.3 Lake-at-rest tests
 
-- [ ] Verify flat-bed and uneven-bed lake-at-rest states.
+- [x] Verify flat-bed and uneven-bed lake-at-rest states.
 
 Run at:
 
@@ -399,7 +399,7 @@ Run at:
 
 ### 2.4 Conservation tests
 
-- [ ] Verify closed-boundary mass conservation and shared-face flux consistency.
+- [x] Verify closed-boundary mass conservation and shared-face flux consistency.
 
 Run perturbation and terrain cases at:
 
@@ -408,23 +408,23 @@ Run perturbation and terrain cases at:
 
 ### 2.5 Boundary tests
 
-- [ ] Verify reflective wall behavior, corners, and absence of leakage.
+- [x] Verify reflective wall behavior, corners, and absence of leakage.
 
 ### 2.6 Wave, damping, and CFL tests
 
-- [ ] Verify bounded wave propagation, monotonic damping behavior, and invalid-step detection.
+- [x] Verify bounded wave propagation, monotonic damping behavior, and invalid-step detection.
 
 Use `32×32` for fast tests and `128×128` for longer propagation.
 
 ### 2.7 Wet/dry and positivity tests
 
-- [ ] Verify donor limiting, nonnegative water depth, and dry-cell cleanup.
+- [x] Verify donor limiting, nonnegative water depth, and dry-cell cleanup.
 
 Use `32×32` and `128×128` dry-island scenes.
 
 ### 2.8 Serial/parallel consistency tests
 
-- [ ] Compare serial and parallel execution over short and long runs.
+- [x] Compare serial and parallel execution over short and long runs.
 
 Cover:
 
@@ -437,13 +437,13 @@ Cover:
 
 ### 2.9 Terrain brush tests
 
-- [ ] Verify brush coverage, falloff, accumulation, clamping, and boundary safety.
+- [x] Verify brush coverage, falloff, accumulation, clamping, and boundary safety.
 
 Use `32×32` and `128×128`.
 
 ### 2.10 Polygon tests
 
-- [ ] Verify triangle, rectangle, supported concave shape, vertex-order reversal, invalid input, add mode, and set mode.
+- [x] Verify triangle, rectangle, supported concave shape, vertex-order reversal, invalid input, add mode, and set mode.
 
 Use `32×32` and `128×128`.
 

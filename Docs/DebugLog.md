@@ -10,3 +10,9 @@
   velocity components different C++ types.
 - Added wet/dry pressure-face treatment so a level lake beside higher dry terrain
   remains at rest while lower dry terrain remains inundatable.
+- The generated `#Preview` declaration could not expand under the command-line
+  build sandbox (`swift-plugin-server` was denied). Removed this template-only
+  declaration; the product build and XCTest bundle then compiled successfully.
+- XCTest execution initially could not contact `testmanagerd` from the restricted
+  sandbox. Re-ran the identical commands with the required macOS test-runner
+  permission. Debug, Address Sanitizer, and Thread Sanitizer suites all passed.

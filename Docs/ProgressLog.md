@@ -33,3 +33,32 @@ clang++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror \
 ```
 
 Result: `phase1 smoke: passed`.
+
+## 2026-08-01 — Phase 2 complete
+
+- Replaced the template unit test with a formal Objective-C++ XCTest suite in
+  `TideSandboxTests/EngineTests.mm`. Tests use only public Engine headers and
+  public read-only state access.
+- Tests are driven by numerical invariants rather than example-only values:
+  machine-epsilon-scaled closed-domain conservation, exact lake-at-rest balance,
+  the analytical initial CFL time step, exact exponential damping after one
+  pressure kick, nonnegativity, finite-state checks, reflective zero-normal-flow
+  boundaries, and bit-identical serial/parallel row kernels.
+- Covered 16², 32², 128², 512², and non-square fields; flat and uneven terrain;
+  wet/dry islands; worker counts 1, 2, and 4; all brush falloffs; clamping and
+  accumulation; convex/concave polygons in both orientations; add/set modes; and
+  malformed polygon rejection.
+- Removed the template SwiftUI preview declaration because sandboxed macro
+  expansion prevented command-line builds; previews will use ordinary fixtures
+  when the real UI is present.
+
+Verification:
+
+```text
+XCTest (Debug):          9/9 passed, 8.789 s
+Address Sanitizer:      9/9 passed, 14.625 s
+Thread Sanitizer:       9/9 passed, 86.930 s
+512² consistency case: passed with worker counts 2 and 4
+```
+
+The sanitizer runs reported no invalid memory accesses and no Engine data races.
