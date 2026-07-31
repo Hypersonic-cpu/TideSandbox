@@ -9,6 +9,8 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
         let elevationRange: SIMD4<Float>
         let lightDirection: SIMD4<Float>
         let waterParameters: SIMD4<Float>
+        let cameraTarget: SIMD4<Float>
+        let debugFlags: SIMD4<UInt32>
     }
 
     private struct ScalarBufferSet {
@@ -21,6 +23,7 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
     private let diagnosticPipeline: MTLRenderPipelineState
     private let terrainPipeline: MTLRenderPipelineState
     private let waterPipeline: MTLRenderPipelineState
+    private let debugLinePipeline: MTLRenderPipelineState
     private let terrainDepthState: MTLDepthStencilState
     private let waterDepthState: MTLDepthStencilState
     private var resourceTracker = HeightFieldResourceTracker()
@@ -37,8 +40,13 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
     private var maximumWaterDepth: Float = 0
     private var maximumAbsoluteElevation: Float = 0
     private var minimumWetDepth: Float = 1.0e-6
+    private var hasFittedCamera = false
+    private var pendingCameraState: OrbitCameraState?
     private(set) var snapshotGeneration: UInt64 = .max
     private(set) var drawableSize: CGSize = .zero
+    var onCameraChange: ((OrbitCameraState, CameraChangeReason) -> Void)?
+
+    var cameraState: OrbitCameraState { orbitCamera.state }
 
     init?(view: MTKView) {
         guard let device = view.device,
@@ -49,7 +57,9 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
               let terrainVertex = library.makeFunction(name: "terrainVertex"),
               let terrainFragment = library.makeFunction(name: "terrainFragment"),
               let waterVertex = library.makeFunction(name: "waterVertex"),
-              let waterFragment = library.makeFunction(name: "waterFragment") else {
+              let waterFragment = library.makeFunction(name: "waterFragment"),
+              let debugLineVertex = library.makeFunction(name: "debugLineVertex"),
+              let debugLineFragment = library.makeFunction(name: "debugLineFragment") else {
             return nil
         }
 
@@ -84,6 +94,13 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
         waterColor.destinationRGBBlendFactor = .oneMinusSourceAlpha
         waterColor.destinationAlphaBlendFactor = .oneMinusSourceAlpha
 
+        let debugLineDescriptor = MTLRenderPipelineDescriptor()
+        debugLineDescriptor.label = "3D debug lines"
+        debugLineDescriptor.vertexFunction = debugLineVertex
+        debugLineDescriptor.fragmentFunction = debugLineFragment
+        debugLineDescriptor.colorAttachments[0].pixelFormat = view.colorPixelFormat
+        debugLineDescriptor.depthAttachmentPixelFormat = view.depthStencilPixelFormat
+
         let depthDescriptor = MTLDepthStencilDescriptor()
         depthDescriptor.label = "Terrain depth"
         depthDescriptor.depthCompareFunction = .less
@@ -98,6 +115,9 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
             )
             terrainPipeline = try device.makeRenderPipelineState(descriptor: terrainDescriptor)
             waterPipeline = try device.makeRenderPipelineState(descriptor: waterDescriptor)
+            debugLinePipeline = try device.makeRenderPipelineState(
+                descriptor: debugLineDescriptor
+            )
         } catch {
             return nil
         }
@@ -166,7 +186,8 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
         domainWidth = newDomainWidth
         domainHeight = newDomainHeight
         if dimensionsChanged {
-            fitCamera()
+            pendingCameraState = nil
+            _ = fitCamera()
         }
         snapshotGeneration = snapshot.generation
     }
@@ -176,23 +197,75 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
             yawDegrees: yawDegrees,
             pitchDegrees: pitchDegrees
         )
+        if var pendingCameraState {
+            pendingCameraState.yaw = yawDegrees * .pi / 180
+            pendingCameraState.pitch = min(max(pitchDegrees, -89), -5) * .pi / 180
+            self.pendingCameraState = pendingCameraState
+        }
+    }
+
+    func restoreCameraState(_ state: OrbitCameraState) {
+        if hasFittedCamera {
+            _ = orbitCamera.restore(state)
+        } else {
+            pendingCameraState = state
+        }
+    }
+
+    func orbitCamera(deltaX: Float, deltaY: Float) {
+        orbitCamera.orbit(deltaX: deltaX, deltaY: deltaY)
+        reportCameraChange(.interaction)
+    }
+
+    func panCamera(deltaX: Float, deltaY: Float, viewportHeight: Float) {
+        orbitCamera.pan(
+            deltaX: deltaX,
+            deltaY: deltaY,
+            viewportHeight: viewportHeight
+        )
+        reportCameraChange(.interaction)
+    }
+
+    func zoomCamera(scrollDelta: Float) {
+        orbitCamera.zoom(scrollDelta: scrollDelta)
+        reportCameraChange(.interaction)
+    }
+
+    func fitCameraToDomain(reportChange: Bool = true) {
+        pendingCameraState = nil
+        if fitCamera(), reportChange {
+            reportCameraChange(.fit)
+        }
+    }
+
+    func applyCameraPreset(_ preset: CameraPreset) {
+        pendingCameraState = nil
+        orbitCamera.apply(preset)
+        if fitCamera() {
+            reportCameraChange(.preset(preset))
+        }
     }
 
     func setMinimumWetDepth(_ value: Float) {
         minimumWetDepth = value.isFinite && value >= 0 ? value : 0
     }
 
-    func setVerticalScale(_ value: Float) {
-        let newValue = min(max(value.isFinite ? value : 1, 1), 20)
-        guard settings.verticalScale != newValue else { return }
-        settings.verticalScale = newValue
-        if mesh != nil {
-            fitCamera()
+    func setSettings(_ requestedSettings: Render3DSettings) {
+        var newSettings = requestedSettings
+        newSettings.verticalScale = min(max(
+            requestedSettings.verticalScale.isFinite ? requestedSettings.verticalScale : 1,
+            1
+        ), 20)
+        newSettings.waterOpacity = min(max(
+            requestedSettings.waterOpacity.isFinite ? requestedSettings.waterOpacity : 0.72,
+            0.2
+        ), 1)
+        guard settings != newSettings else { return }
+        let verticalScaleChanged = settings.verticalScale != newSettings.verticalScale
+        settings = newSettings
+        if verticalScaleChanged, mesh != nil {
+            _ = fitCamera()
         }
-    }
-
-    func setWaterOpacity(_ value: Float) {
-        settings.waterOpacity = min(max(value.isFinite ? value : 0.72, 0.2), 1)
     }
 
     func resize(drawableSize: CGSize) {
@@ -200,7 +273,11 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
         guard drawableSize.width > 0, drawableSize.height > 0 else { return }
         orbitCamera.updateAspectRatio(Float(drawableSize.width / drawableSize.height))
         if mesh != nil {
-            fitCamera()
+            let stateToRestore = pendingCameraState ?? (hasFittedCamera ? cameraState : nil)
+            if fitCamera(), let stateToRestore {
+                _ = orbitCamera.restore(stateToRestore)
+            }
+            pendingCameraState = nil
         }
     }
 
@@ -241,6 +318,7 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
                 offset: 0,
                 index: 0
             )
+            encoder.setVertexBuffer(activeBuffers.waterDepth, offset: 0, index: 2)
             encoder.drawIndexedPrimitives(
                 type: .triangle,
                 indexCount: mesh.indexCount,
@@ -262,6 +340,12 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
                 indexType: .uint32,
                 indexBuffer: indexBuffer,
                 indexBufferOffset: 0
+            )
+
+            drawDebugLines(
+                encoder: encoder,
+                mesh: mesh,
+                activeBuffers: activeBuffers
             )
         } else {
             encoder.label = "3D diagnostic pass"
@@ -313,8 +397,9 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
         return true
     }
 
-    private func fitCamera() {
-        guard drawableSize.width > 0, drawableSize.height > 0 else { return }
+    @discardableResult
+    private func fitCamera() -> Bool {
+        guard drawableSize.width > 0, drawableSize.height > 0 else { return false }
         orbitCamera.fitToDomain(
             domainWidth: domainWidth,
             domainHeight: domainHeight,
@@ -322,6 +407,12 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
             verticalScale: settings.verticalScale,
             aspectRatio: Float(drawableSize.width / drawableSize.height)
         )
+        hasFittedCamera = true
+        return true
+    }
+
+    private func reportCameraChange(_ reason: CameraChangeReason) {
+        onCameraChange?(cameraState, reason)
     }
 
     private func frameUniforms(mesh: HeightFieldMesh) -> FrameUniforms {
@@ -353,8 +444,54 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
                 settings.shorelineBand,
                 settings.waterOpacity,
                 settings.renderBias
+            ),
+            cameraTarget: SIMD4<Float>(cameraState.target, 1),
+            debugFlags: SIMD4<UInt32>(
+                settings.showWetCellMask ? 1 : 0,
+                settings.showDomainBounds ? 1 : 0,
+                settings.showSurfaceNormals ? 1 : 0,
+                settings.showCameraTarget ? 1 : 0
             )
         )
+    }
+
+    private func drawDebugLines(
+        encoder: MTLRenderCommandEncoder,
+        mesh: HeightFieldMesh,
+        activeBuffers: ScalarBufferSet
+    ) {
+        guard settings.showDomainBounds || settings.showSurfaceNormals ||
+                settings.showCameraTarget else {
+            return
+        }
+        encoder.label = "3D debug line pass"
+        encoder.setRenderPipelineState(debugLinePipeline)
+        encoder.setDepthStencilState(waterDepthState)
+        encoder.setCullMode(.none)
+        encoder.setVertexBuffer(activeBuffers.bedElevation, offset: 0, index: 0)
+        encoder.setVertexBuffer(activeBuffers.waterDepth, offset: 0, index: 2)
+
+        if settings.showDomainBounds {
+            var mode: UInt32 = 0
+            encoder.setVertexBytes(&mode, length: MemoryLayout<UInt32>.stride, index: 3)
+            encoder.drawPrimitives(type: .line, vertexStart: 0, vertexCount: 24)
+        }
+        if settings.showSurfaceNormals {
+            var mode: UInt32 = 1
+            encoder.setVertexBytes(&mode, length: MemoryLayout<UInt32>.stride, index: 3)
+            let columns = min(mesh.width, 16)
+            let rows = min(mesh.height, 16)
+            encoder.drawPrimitives(
+                type: .line,
+                vertexStart: 0,
+                vertexCount: columns * rows * 2
+            )
+        }
+        if settings.showCameraTarget {
+            var mode: UInt32 = 2
+            encoder.setVertexBytes(&mode, length: MemoryLayout<UInt32>.stride, index: 3)
+            encoder.drawPrimitives(type: .line, vertexStart: 0, vertexCount: 6)
+        }
     }
 
     private static func copy(_ values: [Float], to buffer: MTLBuffer) {

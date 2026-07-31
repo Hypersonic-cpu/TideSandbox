@@ -339,3 +339,39 @@ Focused 16² ↔ 512²/reset UI scenario:   1/1 passed, 28.031 s
 Retained final-run screenshots:         7/8 maximum
 git diff --check:                       passed
 ```
+
+## 2026-08-01 — 3D Phase 5 camera interaction and debug tools complete
+
+- Added an orbit camera driven by left-drag, Shift-left/middle-drag pan,
+  scroll-wheel zoom, double-click/`F` fit, and the `1`–`4` deterministic
+  presets. Camera arithmetic rejects non-finite input, keeps pitch and distance
+  within domain-dependent bounds, and pans analytically in the camera plane.
+- Added explicit Fit view, Yaw, and Pitch controls. Full typed camera state is
+  retained across 2D → 3D view recreation during the session; preset loading,
+  scene loading, vertical-scale changes, and Fit deliberately request a fresh
+  deterministic framing.
+- Added an expandable 3D Debug section with functional terrain/water
+  wireframes, domain bounds, sparse shader-derived surface normals, wet-cell
+  classification colors, and a camera-target marker. Debug geometry is produced
+  directly from the reusable scalar buffers without grid-sized CPU arrays.
+- Kept pointer focus local to the Metal viewport so toolbar, inspector, Save,
+  and Gallery interactions do not move the camera. Opening and closing Gallery
+  in 3D preserves the exact displayed yaw and pitch.
+- Added analytical XCTest coverage for orbit, pan, zoom, invalid state restore,
+  fit requests, angle normalization, typed session state, and simulation
+  snapshot immutability. A signed UI scenario exercises keyboard and pointer
+  input, 2D/3D restoration, Save/Gallery availability, and every debug mode.
+- Visually inspected the retained free-orbit window on the active display. The
+  6× terrain relief, mesh alignment, domain box, sparse normals, target marker,
+  Fit button, and Yaw/Pitch bars are clear and unclipped. The complete run
+  retains exactly eight window-only images and no recording.
+
+Verification:
+
+```text
+Complete product XCTest:              39/39 passed, 13.472 s execution
+Normally signed UI/launch suite:      13/13 passed, 237.411 s execution
+Focused camera/debug UI scenario:       1/1 passed, 43.177 s
+Retained final-run screenshots:         8/8 maximum
+git diff --check:                       passed
+```

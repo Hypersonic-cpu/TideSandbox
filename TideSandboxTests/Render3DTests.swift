@@ -170,6 +170,137 @@ final class Render3DTests: XCTestCase {
         XCTAssertEqual(camera.state.pitch, -89 * .pi / 180, accuracy: Float.ulpOfOne * 4)
     }
 
+    func testOrbitPanAndZoomFollowAnalyticalCameraTransformsAndBounds() {
+        var camera = OrbitCamera()
+        camera.apply(.isometric)
+        camera.fitToDomain(
+            domainWidth: 80,
+            domainHeight: 40,
+            maximumAbsoluteElevation: 3,
+            verticalScale: 2,
+            aspectRatio: 1.5
+        )
+        let fittedState = camera.state
+
+        camera.orbit(deltaX: 100, deltaY: -1_000)
+        XCTAssertEqual(camera.state.target, fittedState.target)
+        XCTAssertEqual(camera.state.distance, fittedState.distance)
+        XCTAssertEqual(camera.state.yaw, fittedState.yaw + 0.6, accuracy: 1.0e-6)
+        XCTAssertEqual(camera.state.pitch, -89 * .pi / 180, accuracy: 1.0e-6)
+
+        camera.restore(fittedState)
+        let matrices = camera.matrices()
+        let forward = simd_normalize(camera.state.target - matrices.position)
+        let right = simd_normalize(simd_cross(forward, SIMD3<Float>(0, 1, 0)))
+        let up = simd_normalize(simd_cross(right, forward))
+        let delta = SIMD2<Float>(32, -18)
+        let viewportHeight: Float = 720
+        let unitsPerPoint = 2 * fittedState.distance *
+            tan(fittedState.fieldOfViewY * 0.5) / viewportHeight
+        let expectedTarget = fittedState.target +
+            (-right * delta.x - up * delta.y) * unitsPerPoint
+        camera.pan(
+            deltaX: delta.x,
+            deltaY: delta.y,
+            viewportHeight: viewportHeight
+        )
+        XCTAssertEqual(camera.state.target.x, expectedTarget.x, accuracy: 1.0e-6)
+        XCTAssertEqual(camera.state.target.y, expectedTarget.y, accuracy: 1.0e-6)
+        XCTAssertEqual(camera.state.target.z, expectedTarget.z, accuracy: 1.0e-6)
+        XCTAssertEqual(camera.state.yaw, fittedState.yaw)
+        XCTAssertEqual(camera.state.pitch, fittedState.pitch)
+        XCTAssertEqual(camera.state.distance, fittedState.distance)
+
+        camera.restore(fittedState)
+        camera.zoom(scrollDelta: 1)
+        XCTAssertEqual(
+            camera.state.distance,
+            fittedState.distance * exp(0.06),
+            accuracy: 1.0e-5
+        )
+        camera.zoom(scrollDelta: -10_000)
+        XCTAssertEqual(camera.state.distance, camera.minimumDistance)
+        camera.zoom(scrollDelta: 10_000)
+        XCTAssertEqual(camera.state.distance, camera.maximumDistance)
+    }
+
+    func testCameraRestoreRejectsInvalidStateWithoutMutation() {
+        var camera = OrbitCamera()
+        camera.fitToDomain(
+            domainWidth: 64,
+            domainHeight: 32,
+            maximumAbsoluteElevation: 2,
+            verticalScale: 4,
+            aspectRatio: 1
+        )
+        let original = camera.state
+        var invalidStates: [OrbitCameraState] = []
+
+        var invalidTarget = original
+        invalidTarget.target.x = .nan
+        invalidStates.append(invalidTarget)
+        var invalidYaw = original
+        invalidYaw.yaw = .infinity
+        invalidStates.append(invalidYaw)
+        var invalidDistance = original
+        invalidDistance.distance = 0
+        invalidStates.append(invalidDistance)
+        var invalidFieldOfView = original
+        invalidFieldOfView.fieldOfViewY = .pi
+        invalidStates.append(invalidFieldOfView)
+
+        for invalidState in invalidStates {
+            XCTAssertFalse(camera.restore(invalidState))
+            XCTAssertEqual(camera.state, original)
+        }
+    }
+
+    func testCameraSessionStoresOneTypedStateAndTracksInteractionSemantics() {
+        let model = SimulationViewModel()
+        let fitted = OrbitCameraState(
+            target: SIMD3<Float>(3, -1, 7),
+            yaw: -Float.pi / 2,
+            pitch: -Float.pi / 4,
+            distance: 42,
+            fieldOfViewY: 50 * .pi / 180
+        )
+        model.acceptCameraState(fitted, reason: .interaction)
+        XCTAssertEqual(model.cameraSessionState, fitted)
+        XCTAssertNil(model.cameraPreset)
+        XCTAssertEqual(model.cameraYawDegrees, 270, accuracy: 1.0e-9)
+        XCTAssertEqual(model.cameraPitchDegrees, -45, accuracy: 1.0e-5)
+
+        model.setCameraYawDegrees(120)
+        model.setCameraPitchDegrees(-22)
+        XCTAssertEqual(
+            model.cameraSessionState?.yaw ?? .nan,
+            Float(120) * .pi / 180,
+            accuracy: 1.0e-6
+        )
+        XCTAssertEqual(
+            model.cameraSessionState?.pitch ?? .nan,
+            Float(-22) * .pi / 180,
+            accuracy: 1.0e-6
+        )
+
+        let requestBeforeScale = model.cameraFitRequestID
+        model.setVerticalExaggeration(9)
+        XCTAssertEqual(model.verticalExaggeration, 9)
+        XCTAssertNil(model.cameraSessionState)
+        XCTAssertEqual(model.cameraFitRequestID, requestBeforeScale + 1)
+
+        model.acceptCameraState(fitted, reason: .interaction)
+        let requestBeforeFit = model.cameraFitRequestID
+        model.requestCameraFit()
+        XCTAssertNil(model.cameraSessionState)
+        XCTAssertEqual(model.cameraFitRequestID, requestBeforeFit + 1)
+
+        let requestBeforePreset = model.cameraFitRequestID
+        model.selectCameraPreset(.oppositeOblique)
+        XCTAssertEqual(model.cameraPreset, .oppositeOblique)
+        XCTAssertEqual(model.cameraFitRequestID, requestBeforePreset + 1)
+    }
+
     func testResourceTrackerRebuildsOnlyForDimensionChanges() throws {
         var tracker = HeightFieldResourceTracker()
         XCTAssertTrue(try tracker.register(width: 16, height: 16))
@@ -196,6 +327,12 @@ final class Render3DTests: XCTestCase {
         model.setCameraPitchDegrees(-24)
         model.verticalExaggeration = 8
         model.waterOpacity = 0.6
+        model.wireframeTerrain = true
+        model.wireframeWater = true
+        model.showDomainBounds = true
+        model.showSurfaceNormals = true
+        model.showWetCellMask = true
+        model.showCameraTarget = true
         model.viewportMode = .mosaic2D
 
         let after = model.snapshot

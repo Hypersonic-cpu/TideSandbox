@@ -129,6 +129,7 @@ struct MainWindowView: View {
 private struct InspectorView: View {
     @ObservedObject var model: SimulationViewModel
     @ObservedObject var library: SceneLibrary
+    @State private var is3DDebugExpanded = false
     let showGallery: () -> Void
     let save: () -> Void
     let saveAs: () -> Void
@@ -207,6 +208,10 @@ private struct InspectorView: View {
                     }
                 }
                 .accessibilityIdentifier("camera-preset-picker")
+                Button("Fit view", systemImage: "viewfinder", action: model.requestCameraFit)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .accessibilityIdentifier("fit-camera-button")
+                    .help("Fit the whole terrain and water domain")
                 LabeledSlider(
                     title: "Yaw",
                     value: Binding(
@@ -229,7 +234,10 @@ private struct InspectorView: View {
                 )
                 LabeledSlider(
                     title: "Vertical exaggeration",
-                    value: $model.verticalExaggeration,
+                    value: Binding(
+                        get: { model.verticalExaggeration },
+                        set: model.setVerticalExaggeration
+                    ),
                     range: 1...20,
                     format: "%.1f×",
                     accessibilityIdentifier: "vertical-exaggeration-slider"
@@ -244,6 +252,39 @@ private struct InspectorView: View {
                     format: "%.0f%%",
                     accessibilityIdentifier: "water-opacity-slider"
                 )
+                Button {
+                    is3DDebugExpanded.toggle()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: is3DDebugExpanded
+                              ? "chevron.down"
+                              : "chevron.right")
+                            .font(.caption.weight(.semibold))
+                        Text("3D Debug")
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("debug-3d-disclosure")
+                .accessibilityValue(is3DDebugExpanded ? "Expanded" : "Collapsed")
+                if is3DDebugExpanded {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle("Wireframe terrain", isOn: $model.wireframeTerrain)
+                            .accessibilityIdentifier("wireframe-terrain-toggle")
+                        Toggle("Wireframe water", isOn: $model.wireframeWater)
+                            .accessibilityIdentifier("wireframe-water-toggle")
+                        Toggle("Domain bounds", isOn: $model.showDomainBounds)
+                            .accessibilityIdentifier("domain-bounds-toggle")
+                        Toggle("Surface normals", isOn: $model.showSurfaceNormals)
+                            .accessibilityIdentifier("surface-normals-toggle")
+                        Toggle("Wet-cell mask", isOn: $model.showWetCellMask)
+                            .accessibilityIdentifier("wet-cell-mask-toggle")
+                        Toggle("Camera target", isOn: $model.showCameraTarget)
+                            .accessibilityIdentifier("camera-target-toggle")
+                    }
+                    .padding(.top, 6)
+                }
             } else {
                 Picker("Quantity", selection: Binding(
                     get: { model.displayMode },

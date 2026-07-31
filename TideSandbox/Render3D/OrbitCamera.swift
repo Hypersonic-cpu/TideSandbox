@@ -37,6 +37,12 @@ enum CameraPreset: String, CaseIterable, Identifiable {
     }
 }
 
+enum CameraChangeReason: Equatable {
+    case interaction
+    case fit
+    case preset(CameraPreset)
+}
+
 struct OrbitCameraState: Sendable, Equatable {
     var target = SIMD3<Float>(repeating: 0)
     var yaw: Float = .pi / 4
@@ -75,6 +81,24 @@ struct OrbitCamera: Sendable {
         clampState()
     }
 
+    @discardableResult
+    mutating func restore(_ restoredState: OrbitCameraState) -> Bool {
+        let target = restoredState.target
+        let minimumFieldOfView = 10 * Float.pi / 180
+        let maximumFieldOfView = 100 * Float.pi / 180
+        guard target.x.isFinite, target.y.isFinite, target.z.isFinite,
+              restoredState.yaw.isFinite, restoredState.pitch.isFinite,
+              restoredState.distance.isFinite, restoredState.distance > 0,
+              restoredState.fieldOfViewY.isFinite,
+              restoredState.fieldOfViewY >= minimumFieldOfView,
+              restoredState.fieldOfViewY <= maximumFieldOfView else {
+            return false
+        }
+        state = restoredState
+        clampState()
+        return true
+    }
+
     mutating func fitToDomain(
         domainWidth: Float,
         domainHeight: Float,
@@ -107,24 +131,27 @@ struct OrbitCamera: Sendable {
     }
 
     mutating func orbit(deltaX: Float, deltaY: Float) {
+        guard deltaX.isFinite, deltaY.isFinite else { return }
         state.yaw += deltaX * 0.006
         state.pitch += deltaY * 0.006
         clampState()
     }
 
     mutating func zoom(scrollDelta: Float) {
+        guard scrollDelta.isFinite else { return }
         state.distance *= exp(scrollDelta * 0.06)
         clampState()
     }
 
     mutating func pan(deltaX: Float, deltaY: Float, viewportHeight: Float) {
+        guard deltaX.isFinite, deltaY.isFinite, viewportHeight.isFinite else { return }
         let matrices = matrices()
         let viewHeight = max(viewportHeight, 1)
         let unitsPerPoint = 2 * state.distance * tan(state.fieldOfViewY * 0.5) / viewHeight
         let forward = simd_normalize(state.target - matrices.position)
         let right = simd_normalize(simd_cross(forward, SIMD3<Float>(0, 1, 0)))
         let up = simd_normalize(simd_cross(right, forward))
-        state.target += (-right * deltaX + up * deltaY) * unitsPerPoint
+        state.target += (-right * deltaX - up * deltaY) * unitsPerPoint
     }
 
     func matrices() -> CameraMatrices {

@@ -43,8 +43,16 @@ final class SimulationViewModel: ObservableObject {
     @Published private(set) var cameraPreset: CameraPreset? = .isometric
     @Published private(set) var cameraYawDegrees = 45.0
     @Published private(set) var cameraPitchDegrees = -35.0
+    @Published private(set) var cameraSessionState: OrbitCameraState?
+    @Published private(set) var cameraFitRequestID: UInt64 = 0
     @Published var verticalExaggeration = 6.0
     @Published var waterOpacity = 0.72
+    @Published var wireframeTerrain = false
+    @Published var wireframeWater = false
+    @Published var showDomainBounds = false
+    @Published var showSurfaceNormals = false
+    @Published var showWetCellMask = false
+    @Published var showCameraTarget = false
     @Published var selectedPreset: SimulationPreset = .centerBump32
     @Published var displayMode: DisplayMode = .waterDepth
     @Published var palette: ColorPalette = .blueWhite
@@ -205,6 +213,7 @@ final class SimulationViewModel: ObservableObject {
 
     private func loadSelectedPreset() {
         pause()
+        resetCameraFraming()
         polygonPoints.removeAll(keepingCapacity: true)
         displayMode = .waterDepth
         palette = displayMode.preferredPalette
@@ -215,6 +224,7 @@ final class SimulationViewModel: ObservableObject {
 
     private func loadScene(_ document: SceneDocument) {
         pause()
+        resetCameraFraming()
         polygonPoints.removeAll(keepingCapacity: true)
         brushPreviewPoint = nil
         currentScene = document
@@ -273,16 +283,71 @@ final class SimulationViewModel: ObservableObject {
         cameraPreset = preset
         cameraYawDegrees = Double(preset.yawDegrees)
         cameraPitchDegrees = Double(preset.pitchDegrees)
+        cameraSessionState = nil
+        cameraFitRequestID &+= 1
     }
 
     func setCameraYawDegrees(_ value: Double) {
         cameraPreset = nil
         cameraYawDegrees = min(max(value.isFinite ? value : 45, 0), 360)
+        updateSessionOrientation()
     }
 
     func setCameraPitchDegrees(_ value: Double) {
         cameraPreset = nil
         cameraPitchDegrees = min(max(value.isFinite ? value : -35, -89), -5)
+        updateSessionOrientation()
+    }
+
+    func requestCameraFit() {
+        cameraSessionState = nil
+        cameraFitRequestID &+= 1
+    }
+
+    func setVerticalExaggeration(_ value: Double) {
+        verticalExaggeration = min(max(value.isFinite ? value : 6, 1), 20)
+        resetCameraFraming()
+    }
+
+    func acceptCameraState(_ state: OrbitCameraState, reason: CameraChangeReason) {
+        cameraSessionState = state
+        let degrees = Double(state.yaw * 180 / .pi)
+        cameraYawDegrees = (degrees.truncatingRemainder(dividingBy: 360) + 360)
+            .truncatingRemainder(dividingBy: 360)
+        cameraPitchDegrees = min(max(Double(state.pitch * 180 / .pi), -89), -5)
+        switch reason {
+        case .fit:
+            break
+        case .interaction:
+            cameraPreset = nil
+        case let .preset(preset):
+            cameraPreset = preset
+        }
+    }
+
+    private func updateSessionOrientation() {
+        guard var state = cameraSessionState else { return }
+        state.yaw = Float(cameraYawDegrees) * .pi / 180
+        state.pitch = Float(cameraPitchDegrees) * .pi / 180
+        cameraSessionState = state
+    }
+
+    private func resetCameraFraming() {
+        cameraSessionState = nil
+        cameraFitRequestID &+= 1
+    }
+
+    var render3DSettings: Render3DSettings {
+        var settings = Render3DSettings()
+        settings.verticalScale = Float(verticalExaggeration)
+        settings.waterOpacity = Float(waterOpacity)
+        settings.wireframeTerrain = wireframeTerrain
+        settings.wireframeWater = wireframeWater
+        settings.showDomainBounds = showDomainBounds
+        settings.showSurfaceNormals = showSurfaceNormals
+        settings.showWetCellMask = showWetCellMask
+        settings.showCameraTarget = showCameraTarget
+        return settings
     }
 
     func applyConfiguration() {

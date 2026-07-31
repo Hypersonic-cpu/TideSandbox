@@ -308,6 +308,108 @@ final class TideSandboxUITests: XCTestCase {
     }
 
     @MainActor
+    func test3DCameraInteractionSessionAndDebugControls() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        let modePicker = app.descendants(matching: .any)["viewport-mode-picker"]
+        XCTAssertTrue(modePicker.waitForExistence(timeout: 8))
+        let mode3D = modePicker.radioButtons.matching(
+            NSPredicate(format: "label == %@", "3D")
+        ).firstMatch
+        let mode2D = modePicker.radioButtons.matching(
+            NSPredicate(format: "label == %@", "2D")
+        ).firstMatch
+        mode3D.click()
+
+        let heightField = app.descendants(matching: .any)["height-field-3d"]
+        let fit = app.buttons["fit-camera-button"]
+        let camera = app.popUpButtons["camera-preset-picker"]
+        let yaw = app.sliders["camera-yaw-slider"]
+        let pitch = app.sliders["camera-pitch-slider"]
+        XCTAssertTrue(heightField.waitForExistence(timeout: 3))
+        XCTAssertTrue(fit.waitForExistence(timeout: 3))
+        XCTAssertTrue(camera.exists)
+        XCTAssertTrue(yaw.exists)
+        XCTAssertTrue(pitch.exists)
+        fit.click()
+
+        heightField.click()
+        heightField.typeKey("1", modifierFlags: [])
+        XCTAssertTrue(waitForValue("Top", identifier: "camera-preset-picker", in: app))
+
+        let dragStart = heightField.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.32, dy: 0.42)
+        )
+        let dragEnd = heightField.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.72, dy: 0.68)
+        )
+        dragStart.press(forDuration: 0.15, thenDragTo: dragEnd)
+        XCTAssertTrue(waitForValue("Custom", identifier: "camera-preset-picker", in: app))
+        let customYaw = String(describing: yaw.value)
+        let customPitch = String(describing: pitch.value)
+
+        heightField.scroll(byDeltaX: 0, deltaY: -80)
+        mode2D.click()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["mosaic-grid"]
+                .waitForExistence(timeout: 3)
+        )
+        mode3D.click()
+        XCTAssertTrue(heightField.waitForExistence(timeout: 3))
+        XCTAssertEqual(String(describing: yaw.value), customYaw)
+        XCTAssertEqual(String(describing: pitch.value), customPitch)
+        XCTAssertTrue(waitForValue("Custom", identifier: "camera-preset-picker", in: app))
+
+        XCTAssertTrue(app.menuButtons["save-scene-menu"].exists)
+        let gallery = app.buttons["gallery-button"]
+        gallery.click()
+        let closeGallery = app.buttons["Done"]
+        XCTAssertTrue(closeGallery.waitForExistence(timeout: 3))
+        closeGallery.click()
+        XCTAssertTrue(heightField.waitForExistence(timeout: 3))
+        XCTAssertEqual(String(describing: yaw.value), customYaw)
+        XCTAssertEqual(String(describing: pitch.value), customPitch)
+
+        let debugDisclosure = app.descendants(matching: .any)["debug-3d-disclosure"]
+        let inspector = app.scrollViews.firstMatch
+        XCTAssertTrue(debugDisclosure.waitForExistence(timeout: 3))
+        for _ in 0..<8 where !debugDisclosure.isHittable {
+            inspector.scroll(byDeltaX: 0, deltaY: -80)
+        }
+        XCTAssertTrue(debugDisclosure.isHittable)
+        debugDisclosure.click()
+        let debugToggleIdentifiers = [
+            "wireframe-terrain-toggle",
+            "wireframe-water-toggle",
+            "domain-bounds-toggle",
+            "surface-normals-toggle",
+            "wet-cell-mask-toggle",
+            "camera-target-toggle",
+        ]
+        for identifier in debugToggleIdentifiers {
+            let toggle = app.descendants(matching: .any)[identifier]
+            XCTAssertTrue(toggle.waitForExistence(timeout: 3))
+            for _ in 0..<8 where !toggle.isHittable {
+                inspector.scroll(byDeltaX: 0, deltaY: -80)
+            }
+            XCTAssertTrue(toggle.isHittable)
+            toggle.click()
+            XCTAssertEqual(toggle.value as? Int, 1)
+        }
+
+        let wetMask = app.descendants(matching: .any)["wet-cell-mask-toggle"]
+        wetMask.click()
+        XCTAssertEqual(wetMask.value as? Int, 0)
+        XCTAssertEqual(String(describing: yaw.value), customYaw)
+        XCTAssertEqual(String(describing: pitch.value), customPitch)
+        let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        screenshot.name = "3D Free Orbit — Debug Geometry"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor
     func testSavedSceneSurvivesRelaunchInGallery() throws {
         let app = XCUIApplication()
         app.launchEnvironment["WATER_SANDBOX_STORAGE_NAMESPACE"] = "PersistenceRelaunch"
