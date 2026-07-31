@@ -163,6 +163,21 @@ final class TideSandboxUITests: XCTestCase {
         loadPreset.click()
         XCTAssertTrue(waitForValue("128 × 128", identifier: "grid-diagnostic", in: app))
 
+        let mosaic = app.descendants(matching: .any)["mosaic-grid"]
+        let raiseTool = app.descendants(matching: .any)["terrain-tool-picker"]
+            .radioButtons.matching(NSPredicate(format: "label == %@", "Raise"))
+            .firstMatch
+        XCTAssertTrue(mosaic.exists)
+        XCTAssertTrue(raiseTool.exists)
+        raiseTool.click()
+        mosaic.coordinate(withNormalizedOffset: CGVector(dx: 0.36, dy: 0.57))
+            .press(forDuration: 0.8)
+
+        let time = app.descendants(matching: .any)["time-diagnostic"]
+        let volume = app.descendants(matching: .any)["volume-diagnostic"]
+        let initialTime = try XCTUnwrap(diagnosticNumber(time))
+        let initialVolume = try XCTUnwrap(diagnosticText(volume))
+
         let modePicker = app.descendants(matching: .any)["viewport-mode-picker"]
         modePicker.radioButtons.matching(
             NSPredicate(format: "label == %@", "3D")
@@ -172,6 +187,10 @@ final class TideSandboxUITests: XCTestCase {
         XCTAssertTrue(heightField.waitForExistence(timeout: 3))
         XCTAssertTrue(cameraPicker.waitForExistence(timeout: 3))
 
+        let playPause = app.buttons["play-pause-button"]
+        playPause.click()
+        XCTAssertTrue(waitForDiagnostic(time, atLeast: initialTime + 0.6, timeout: 8))
+
         for title in ["Top", "Isometric", "Low oblique", "Opposite oblique"] {
             cameraPicker.click()
             let item = cameraPicker.menuItems[title]
@@ -180,10 +199,13 @@ final class TideSandboxUITests: XCTestCase {
             XCTAssertTrue(heightField.exists)
 
             let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
-            screenshot.name = "Uneven Bed — \(title)"
+            screenshot.name = "Moving Uneven Bed — \(title)"
             screenshot.lifetime = .keepAlways
             add(screenshot)
         }
+
+        playPause.click()
+        XCTAssertEqual(try XCTUnwrap(diagnosticText(volume)), initialVolume)
     }
 
     @MainActor
@@ -303,8 +325,83 @@ final class TideSandboxUITests: XCTestCase {
         cameraPicker.menuItems["Opposite oblique"].click()
         let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
         screenshot.name = "512 Coast — Dry Shoreline and Channel"
+        screenshot.lifetime = .deleteOnSuccess
+        add(screenshot)
+    }
+
+    @MainActor
+    func test512CoastActiveFlowOrbitZoomAndFramePacing() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["MTL_HUD_ENABLED"] = "1"
+        app.launchEnvironment["MTL_HUD_LOGGING_ENABLED"] = "1"
+        app.launch()
+
+        let presetPicker = app.popUpButtons["preset-picker"]
+        let loadPreset = app.buttons["load-preset-button"]
+        XCTAssertTrue(presetPicker.waitForExistence(timeout: 8))
+        presetPicker.click()
+        presetPicker.menuItems["512 × 512 Coast Channel"].click()
+        loadPreset.click()
+        XCTAssertTrue(waitForValue("512 × 512", identifier: "grid-diagnostic", in: app))
+
+        let modePicker = app.descendants(matching: .any)["viewport-mode-picker"]
+        modePicker.radioButtons.matching(
+            NSPredicate(format: "label == %@", "3D")
+        ).firstMatch.click()
+        let heightField = app.descendants(matching: .any)["height-field-3d"]
+        XCTAssertTrue(heightField.waitForExistence(timeout: 3))
+
+        let time = app.descendants(matching: .any)["time-diagnostic"]
+        let volume = app.descendants(matching: .any)["volume-diagnostic"]
+        let initialTime = try XCTUnwrap(diagnosticNumber(time))
+        let initialVolume = try XCTUnwrap(diagnosticText(volume))
+        let playPause = app.buttons["play-pause-button"]
+        playPause.click()
+
+        let interactionStart = ContinuousClock.now
+        let orbitStart = heightField.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.15, dy: 0.46)
+        )
+        let orbitEnd = heightField.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.85, dy: 0.46)
+        )
+        let orbitDragCount = 2
+        let commandedYawRadians = Float(
+            heightField.frame.width * 0.70 * CGFloat(orbitDragCount)
+        ) * 0.006
+        XCTAssertGreaterThan(
+            commandedYawRadians,
+            .pi,
+            "The bounded drag must exercise more than 180° of the orbit mapping"
+        )
+        for _ in 0..<orbitDragCount {
+            orbitStart.press(forDuration: 0.15, thenDragTo: orbitEnd)
+        }
+        heightField.scroll(byDeltaX: 0, deltaY: -140)
+        XCTAssertLessThan(
+            ContinuousClock.now - interactionStart,
+            .seconds(8),
+            "512² orbit and shoreline zoom stopped responding to bounded UI input"
+        )
+        XCTAssertTrue(waitForValue("Custom", identifier: "camera-preset-picker", in: app))
+        XCTAssertTrue(waitForDiagnostic(time, atLeast: initialTime + 0.8, timeout: 8))
+        XCTAssertEqual(try XCTUnwrap(diagnosticText(volume)), initialVolume)
+
+        heightField.scroll(byDeltaX: 0, deltaY: 140)
+        app.buttons["fit-camera-button"].click()
+        XCTAssertTrue(waitForDiagnostic(time, atLeast: initialTime + 2.2, timeout: 8))
+        let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        screenshot.name = "512 Coast — Active Orbit and Metal Performance HUD"
         screenshot.lifetime = .keepAlways
         add(screenshot)
+
+        playPause.click()
+        let depthText = try XCTUnwrap(diagnosticText(
+            app.descendants(matching: .any)["depth-diagnostic"]
+        )).lowercased()
+        XCTAssertFalse(depthText.contains("nan"))
+        XCTAssertFalse(depthText.contains("inf"))
+        XCTAssertTrue(heightField.exists)
     }
 
     @MainActor
@@ -346,6 +443,17 @@ final class TideSandboxUITests: XCTestCase {
         )
         dragStart.press(forDuration: 0.15, thenDragTo: dragEnd)
         XCTAssertTrue(waitForValue("Custom", identifier: "camera-preset-picker", in: app))
+        let orbitYaw = try XCTUnwrap(sliderDegrees(yaw))
+        XCTAssertGreaterThan(
+            orbitYaw,
+            60,
+            "The rightward drag should accumulate a substantial positive yaw"
+        )
+        XCTAssertLessThan(
+            orbitYaw,
+            140,
+            "The rightward drag should remain near its analytical 94° mapping"
+        )
         let customYaw = String(describing: yaw.value)
         let customPitch = String(describing: pitch.value)
 
@@ -477,6 +585,12 @@ final class TideSandboxUITests: XCTestCase {
 
     private func waitForGalleryCount(_ count: String, in app: XCUIApplication) -> Bool {
         waitForValue(count, identifier: "gallery-count", in: app)
+    }
+
+    private func sliderDegrees(_ slider: XCUIElement) -> Double? {
+        let text = String(describing: slider.value)
+        let numericText = String(text.filter { "-+.0123456789".contains($0) })
+        return Double(numericText)
     }
 
     private func waitForValue(

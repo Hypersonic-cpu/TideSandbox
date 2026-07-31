@@ -8,6 +8,7 @@ struct HeightField3DView: View {
         ZStack {
             HeightFieldMetalView(
                 snapshot: model.snapshot,
+                isPlaying: model.isPlaying,
                 cameraSessionState: model.cameraSessionState,
                 cameraYawDegrees: Float(model.cameraYawDegrees),
                 cameraPitchDegrees: Float(model.cameraPitchDegrees),

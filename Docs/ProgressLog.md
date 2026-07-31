@@ -375,3 +375,51 @@ Focused camera/debug UI scenario:       1/1 passed, 43.177 s
 Retained final-run screenshots:         8/8 maximum
 git diff --check:                       passed
 ```
+
+## 2026-08-01 — 3D Phases 6–7 regression, performance, and documentation complete
+
+- Fixed accumulated mouse yaw being reset during a drag. SwiftUI snapshot
+  updates had been reapplying the last published inspector yaw/pitch before the
+  renderer's coalesced camera callback arrived. The representable now applies
+  inspector angles only when those inputs actually change, so renderer-owned
+  pointer deltas accumulate continuously. Camera callbacks publish at 60 Hz.
+- Added a signed UI regression that starts from Top, performs one bounded drag,
+  and checks the displayed yaw against the analytical mapping. The observed
+  93° result lies in the deliberate 60°–140° tolerance rather than the former
+  small reset range.
+- Kept snapshot publication at its existing cadence. While Play is active,
+  `MTKView` now presents the most recent immutable triple buffers at 60 FPS;
+  while paused, it remains on-demand. This separates camera/display cadence
+  from solver and snapshot work.
+- Added a 512² Coast stress scenario with more than 180° commanded orbit,
+  shoreline zoom, bounded interaction time, advancing simulation time, exact
+  volume preservation, finite diagnostics, and a Metal Performance HUD capture.
+  The optimized Release run measured 59.02 FPS, 2.70 ms GPU time, and 16.94 ms
+  frame interval. The complete Debug visual run measured 52.56 FPS.
+- Strengthened the four-camera Uneven Bed scenario with a controlled
+  perturbation, active Play, exact volume preservation, and Top, Isometric, Low
+  oblique, and Opposite oblique captures. Top view visibly shows concentric wave
+  propagation; every oblique view preserves terrain/water order.
+- Added `Render3DControls.md` and DD-012 covering controls, limitations, the
+  dual-renderer boundary, immutable snapshot flow, frame pacing, persistence,
+  and framework-only inheritance.
+
+Verification:
+
+```text
+Complete product XCTest:                39/39 passed
+AddressSanitizer product XCTest:        39/39 passed
+ThreadSanitizer product XCTest:         39/39 passed
+Normally signed Release app build:      passed
+Normally signed UI/launch suite:        14/14 passed, 256.904 s execution
+Focused accumulated-yaw UI scenario:      1/1 passed, 42.454 s
+Focused 512² Release/HUD scenario:         1/1 passed, 20.895 s
+Focused active four-camera scenario:      1/1 passed, 29.344 s
+Retained complete-run screenshots:        8/8 maximum, visually inspected
+```
+
+After only strengthening the four-camera test, a requested complete rerun lost
+macOS Accessibility authorization mid-suite. The same current signed test
+bundle had just passed the strengthened scenario, and no product source changed
+after the successful 14/14 run. At the user's direction, the permission-blocked
+duplicate rerun was bypassed rather than reported as a product failure.

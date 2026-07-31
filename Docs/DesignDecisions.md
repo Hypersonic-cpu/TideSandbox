@@ -110,3 +110,32 @@ starts from a copied scalar snapshot, performs the sole bottom-up to top-down ro
 conversion, and produces a non-interpolated `CGImage`. These value policies use
 one enum rather than a class hierarchy because they are closed, stateless
 algorithms with no substitutable object lifecycle.
+
+## DD-012 — Dual display renderers over one immutable snapshot
+
+The 2D and 3D views are separate renderers selected by one closed
+`ViewportMode`. The 2D branch keeps `MosaicGridView` and its exact CPU raster,
+sampling, row-flip, grid, overlay, and pointer-mapping behavior. The 3D branch
+uses SwiftUI → `NSViewRepresentable` → `MTKView` → `HeightFieldRenderer`. Only
+the selected branch exists, so an inactive renderer performs no rasterization,
+buffer upload, or draw work.
+
+Both branches consume the same completed, immutable `SimulationSnapshot`.
+Metal owns reusable topology and three rotating bed/depth buffer pairs; a
+snapshot generation is uploaded at most once and camera-only redraws do not
+re-upload scalar fields. While the simulation is paused, Metal renders on
+demand. While it is playing, the view presents the most recent immutable
+buffers at the display cadence, independently of the lower snapshot-publication
+cadence. This keeps camera motion smooth without increasing solver or snapshot
+work.
+
+The Engine and Objective-C bridge have no Metal, MetalKit, AppKit, or SwiftUI
+dependency, and the renderer never writes simulation state. Camera and display
+settings are session UI state and do not enter `.waterscene` persistence or
+dirty-state accounting.
+
+Inheritance remains limited to required framework substitution:
+`HeightFieldRenderer` conforms through `NSObject`/`MTKViewDelegate`, and
+`InteractiveMTKView` subclasses `MTKView` to receive AppKit pointer and keyboard
+events. Meshes, camera state, settings, and policies remain value structs or
+enums; no domain hierarchy or virtual abstraction is introduced.

@@ -4,6 +4,7 @@ import SwiftUI
 
 struct HeightFieldMetalView: NSViewRepresentable {
     let snapshot: SimulationSnapshot
+    let isPlaying: Bool
     let cameraSessionState: OrbitCameraState?
     let cameraYawDegrees: Float
     let cameraPitchDegrees: Float
@@ -27,8 +28,7 @@ struct HeightFieldMetalView: NSViewRepresentable {
         view.framebufferOnly = true
         view.autoResizeDrawable = true
         view.preferredFramesPerSecond = 60
-        view.enableSetNeedsDisplay = true
-        view.isPaused = true
+        Self.configureFramePacing(view, isPlaying: isPlaying)
         view.clearColor = MTLClearColor(red: 0.075, green: 0.09, blue: 0.11, alpha: 1)
 
         if let renderer = HeightFieldRenderer(view: view) {
@@ -45,6 +45,8 @@ struct HeightFieldMetalView: NSViewRepresentable {
                 yawDegrees: cameraYawDegrees,
                 pitchDegrees: cameraPitchDegrees
             )
+            context.coordinator.lastInspectorYawDegrees = cameraYawDegrees
+            context.coordinator.lastInspectorPitchDegrees = cameraPitchDegrees
             renderer.onCameraChange = context.coordinator.cameraChangeHandler(
                 onCameraChange
             )
@@ -54,12 +56,18 @@ struct HeightFieldMetalView: NSViewRepresentable {
     }
 
     func updateNSView(_ view: InteractiveMTKView, context: Context) {
+        Self.configureFramePacing(view, isPlaying: isPlaying)
         let renderer = context.coordinator.renderer
         renderer?.setMinimumWetDepth(minimumWetDepth)
-        renderer?.setCameraOrientation(
-            yawDegrees: cameraYawDegrees,
-            pitchDegrees: cameraPitchDegrees
-        )
+        if context.coordinator.lastInspectorYawDegrees != cameraYawDegrees ||
+                context.coordinator.lastInspectorPitchDegrees != cameraPitchDegrees {
+            renderer?.setCameraOrientation(
+                yawDegrees: cameraYawDegrees,
+                pitchDegrees: cameraPitchDegrees
+            )
+            context.coordinator.lastInspectorYawDegrees = cameraYawDegrees
+            context.coordinator.lastInspectorPitchDegrees = cameraPitchDegrees
+        }
         renderer?.setSettings(settings)
         renderer?.update(snapshot: snapshot)
         if context.coordinator.lastCameraFitRequestID != cameraFitRequestID {
@@ -72,9 +80,16 @@ struct HeightFieldMetalView: NSViewRepresentable {
         view.setNeedsDisplay(view.bounds)
     }
 
+    private static func configureFramePacing(_ view: MTKView, isPlaying: Bool) {
+        view.enableSetNeedsDisplay = !isPlaying
+        view.isPaused = !isPlaying
+    }
+
     final class Coordinator {
         var renderer: HeightFieldRenderer?
         var lastCameraFitRequestID: UInt64 = 0
+        var lastInspectorYawDegrees: Float?
+        var lastInspectorPitchDegrees: Float?
         private var pendingCameraChange: DispatchWorkItem?
 
         func cameraChangeHandler(
@@ -96,7 +111,7 @@ struct HeightFieldMetalView: NSViewRepresentable {
             }
             pendingCameraChange = workItem
             DispatchQueue.main.asyncAfter(
-                deadline: .now() + 0.05,
+                deadline: .now() + 1.0 / 60.0,
                 execute: workItem
             )
         }
