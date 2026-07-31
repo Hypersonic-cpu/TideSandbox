@@ -145,9 +145,45 @@ final class TideSandboxUITests: XCTestCase {
         XCTAssertTrue(app.windows.firstMatch.exists)
 
         let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
-        screenshot.name = "3D Metal Diagnostic Triangle"
+        screenshot.name = "3D Metal Terrain"
         screenshot.lifetime = .keepAlways
         add(screenshot)
+    }
+
+    @MainActor
+    func test3DTerrainAcrossDeterministicCameraPresets() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        let presetPicker = app.popUpButtons["preset-picker"]
+        let loadPreset = app.buttons["load-preset-button"]
+        XCTAssertTrue(presetPicker.waitForExistence(timeout: 8))
+        presetPicker.click()
+        app.menuItems["128 × 128 Uneven Bed"].click()
+        loadPreset.click()
+        XCTAssertTrue(waitForValue("128 × 128", identifier: "grid-diagnostic", in: app))
+
+        let modePicker = app.descendants(matching: .any)["viewport-mode-picker"]
+        modePicker.radioButtons.matching(
+            NSPredicate(format: "label == %@", "3D")
+        ).firstMatch.click()
+        let heightField = app.descendants(matching: .any)["height-field-3d"]
+        let cameraPicker = app.popUpButtons["camera-preset-picker"]
+        XCTAssertTrue(heightField.waitForExistence(timeout: 3))
+        XCTAssertTrue(cameraPicker.waitForExistence(timeout: 3))
+
+        for title in ["Top", "Isometric", "Low oblique", "Opposite oblique"] {
+            cameraPicker.click()
+            let item = cameraPicker.menuItems[title]
+            XCTAssertTrue(item.waitForExistence(timeout: 2))
+            item.click()
+            XCTAssertTrue(heightField.exists)
+
+            let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+            screenshot.name = "Uneven Bed — \(title)"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+        }
     }
 
     @MainActor

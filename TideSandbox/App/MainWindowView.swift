@@ -192,6 +192,14 @@ private struct InspectorView: View {
             }
             .pickerStyle(.segmented)
             .accessibilityIdentifier("viewport-mode-picker")
+            if model.viewportMode == .heightField3D {
+                Picker("Camera", selection: $model.cameraPreset) {
+                    ForEach(CameraPreset.allCases) { preset in
+                        Text(preset.title).tag(preset)
+                    }
+                }
+                .accessibilityIdentifier("camera-preset-picker")
+            }
             Picker("Quantity", selection: Binding(
                 get: { model.displayMode },
                 set: model.selectDisplayMode

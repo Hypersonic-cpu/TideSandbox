@@ -40,6 +40,7 @@ final class SimulationViewModel: ObservableObject {
     @Published private(set) var snapshot: SimulationSnapshot = .empty
     @Published private(set) var isPlaying = false
     @Published var viewportMode: ViewportMode = .mosaic2D
+    @Published var cameraPreset: CameraPreset = .isometric
     @Published var selectedPreset: SimulationPreset = .centerBump32
     @Published var displayMode: DisplayMode = .waterDepth
     @Published var palette: ColorPalette = .blueWhite

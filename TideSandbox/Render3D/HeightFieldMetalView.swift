@@ -4,6 +4,7 @@ import SwiftUI
 
 struct HeightFieldMetalView: NSViewRepresentable {
     let snapshot: SimulationSnapshot
+    let cameraPreset: CameraPreset
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -28,12 +29,14 @@ struct HeightFieldMetalView: NSViewRepresentable {
             context.coordinator.renderer = renderer
             view.delegate = renderer
             renderer.update(snapshot: snapshot)
+            renderer.setCameraPreset(cameraPreset)
         }
         return view
     }
 
     func updateNSView(_ view: InteractiveMTKView, context: Context) {
         context.coordinator.renderer?.update(snapshot: snapshot)
+        context.coordinator.renderer?.setCameraPreset(cameraPreset)
         view.setNeedsDisplay(view.bounds)
     }
 

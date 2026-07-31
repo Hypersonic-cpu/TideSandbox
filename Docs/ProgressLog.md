@@ -260,3 +260,38 @@ Normally signed UI suite:                 9/9 passed, 117.776 s
 Focused Metal lifecycle UI tests:         2/2 passed
 Diagnostic-triangle visual check:         passed
 ```
+
+## 2026-08-01 — 3D Phase 3 terrain height field complete
+
+- Added one vertex per Engine cell center and a reusable UInt32 index buffer with
+  the specified `(a, c, b), (b, c, d)` winding. Mesh construction validates
+  arithmetic and index-range overflow without allocating a second validation
+  mesh, and static resources rebuild only when grid dimensions change.
+- Added a rotating set of three reusable bed-elevation buffers. Every snapshot
+  dimension, domain extent, and elevation is validated before upload; repeated
+  generations skip upload and no CPU position or normal array is constructed.
+- Added shader-generated cell-center positions and finite-difference normals,
+  depth-tested counter-clockwise terrain with back-face culling, directional and
+  ambient lighting, and a bed-elevation sand-to-green color range independent of
+  the 2D quantity and palette controls.
+- Added deterministic Top, Isometric, Low oblique, and Opposite oblique cameras.
+  Domain fitting accounts for physical dimensions, maximum absolute elevation,
+  vertical scale, field of view, and viewport aspect ratio.
+- Added scientific XCTest coverage for exact counts, every index, every triangle
+  winding through 512², exact cell-center coordinates, wet/dry threshold
+  neighborhoods, all camera presets at aspect ratios from 1:100 through 100:1,
+  dimension-only rebuild tracking, and complete snapshot immutability during
+  viewport and camera changes.
+- Visually inspected the asymmetric 128² uneven-bed terrain from all four camera
+  presets using four retained window-only screenshots on the active display.
+  Orientation, culling, composition, and unclipped toolbar/inspector layout were
+  correct from every direction.
+
+Verification:
+
+```text
+Complete product XCTest: 34/34 passed
+Normally signed UI suite: 10/10 passed, 141.432 s
+Four-camera UI scenario:  passed, 22.668 s
+git diff --check:          passed
+```

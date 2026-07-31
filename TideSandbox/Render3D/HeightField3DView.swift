@@ -6,7 +6,10 @@ struct HeightField3DView: View {
 
     var body: some View {
         ZStack {
-            HeightFieldMetalView(snapshot: model.snapshot)
+            HeightFieldMetalView(
+                snapshot: model.snapshot,
+                cameraPreset: model.cameraPreset
+            )
             if MTLCreateSystemDefaultDevice() == nil {
                 ContentUnavailableView(
                     "Metal unavailable",
