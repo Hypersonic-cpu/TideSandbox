@@ -10,8 +10,9 @@ import SwiftUI
 @main
 struct TideSandboxApp: App {
     var body: some Scene {
-        WindowGroup {
+        WindowGroup("Water Sandbox") {
             ContentView()
         }
+        .windowResizability(.contentMinSize)
     }
 }

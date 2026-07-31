@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# Xcode build products and local state
+Build/
+DerivedData/
+*.xcresult
+*.xccovarchive
+*.xccovreport
+*.profraw
+**/xcuserdata/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Standalone C++ build artifacts
+*.o
+*.dSYM/

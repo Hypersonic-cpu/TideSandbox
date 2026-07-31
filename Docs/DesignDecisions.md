@@ -37,3 +37,29 @@ still uses donor upwinding and the documented conservative outgoing limiter.
 function pointer and stack-owned context, partitions contiguous row ranges, and
 waits at the dependency boundary. Dispatch performs no heap allocation. Worker
 count is fixed for a solver lifetime so pool ownership and shutdown remain clear.
+
+## DD-006 — Narrow copied-snapshot bridge
+
+Swift receives Objective-C objects and immutable copied `NSData` fields, never
+STL containers or mutable Engine arrays. One serial runtime queue is the sole
+owner of bridge operations and callback state; the SwiftUI main actor receives
+only completed `SimulationSnapshot` values. This makes queue ownership explicit
+and keeps the numerical core independent of AppKit and SwiftUI.
+
+The bridge and Engine use constant values and `const` references by default;
+mutable references are limited to operations that actually update solver state.
+Both velocity directions remain the same concrete `FaceField` type. Inheritance
+is used only where there is a genuine substitutable interface, rather than as a
+mechanism for sharing incidental storage behavior.
+
+## DD-007 — Exact CPU mosaic
+
+The renderer creates an RGBA image whose width and height exactly equal the grid
+dimensions, so each source pixel is one simulation cell. SwiftUI scales that
+image uniformly with interpolation disabled. Engine rows increase upward;
+display rows increase downward, so raster construction performs exactly one
+vertical row reversal. Pointer mapping applies the inverse transform.
+
+Grid lines are drawn only when a displayed tile is at least four points wide.
+They remain an optional inspection aid at small scales without obscuring the
+512² scalar field.

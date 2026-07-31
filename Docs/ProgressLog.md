@@ -62,3 +62,44 @@ Thread Sanitizer:       9/9 passed, 86.930 s
 ```
 
 The sanitizer runs reported no invalid memory accesses and no Engine data races.
+
+## 2026-08-01 — Phase 3 complete
+
+- Added a narrow Objective-C++ bridge that keeps STL and mutable Engine storage
+  out of Swift. It owns load/reset, play state, stepping, configuration, copied
+  immutable snapshots, diagnostics, and terrain commands.
+- Added a single serial runtime queue around the bridge. The Engine retains its
+  own persistent worker pool, snapshots publish at a controlled rate, continuous
+  brushing ticks at 60 Hz, and shutdown cancels the timer before releasing the
+  solver. Snapshot callback installation and invocation both occur on the
+  runtime queue.
+- Added exact fit-to-view grid mapping and a one-source-pixel-per-cell RGBA
+  raster with nearest-neighbor display. The only axis conversion is the
+  documented Engine-bottom-left to SwiftUI-top-left row flip.
+- Added six scalar modes, four palettes, an explicit invalid-value color,
+  optional grid lines, play/pause/step/reset, speed and solver parameters,
+  diagnostics, continuous raise/lower painting, and polygon add/set tools.
+- Added finite level-water presets at 16², 32², 128², and 512². Scientific
+  XCTest coverage verifies roundoff-bounded level surfaces, finite nonnegative
+  depth, bridge round trips, coordinate inverses, raster byte placement, color
+  endpoints, invalid values, and brush/polygon mapping at every required scale.
+- Added signed macOS UI tests for launch, controls, and loading all four presets.
+  UI attachments are window-scoped so they never capture the primary display.
+- Added `.gitignore` coverage for Xcode, SwiftPM, coverage, and standalone C++
+  build artifacts, and removed unused iOS/visionOS target settings.
+
+Verification:
+
+```text
+Debug app build:          passed
+Release app build:        passed
+Engine/bridge/display:    16/16 passed, 10.895 s
+Signed macOS UI suite:     4/4 passed, 34.905 s
+No Metal/3D source scan:  passed
+git diff --check:          passed
+```
+
+Visual verification was performed on display 2 only. The 32² view showed crisp,
+aligned cell tiles and grid lines. A retained window-only 512² coast/channel
+capture confirmed the selected preset, 512 × 512 diagnostic, uninterpolated
+mosaic, legible floating controls, and non-overlapping inspector layout.

@@ -460,7 +460,7 @@ Use `32×32` and `128×128`.
 
 # Phase 3 — macOS 2D mosaic app
 
-- [ ] **Phase 3 complete**
+- [x] **Phase 3 complete**
 
 ## Goal
 
@@ -468,7 +468,7 @@ Run the CPU Engine from a macOS app and display an exact one-tile-per-cell mosai
 
 ### 3.1 Objective-C++ bridge
 
-- [ ] Implement a narrow bridge for state control, snapshots, diagnostics, and terrain commands.
+- [x] Implement a narrow bridge for state control, snapshots, diagnostics, and terrain commands.
 
 Support:
 
@@ -485,7 +485,7 @@ Do not expose STL or mutable Engine arrays to Swift.
 
 ### 3.2 Runtime scheduling
 
-- [ ] Run simulation outside the SwiftUI main thread.
+- [x] Run simulation outside the SwiftUI main thread.
 
 Requirements:
 
@@ -497,7 +497,7 @@ Requirements:
 
 ### 3.3 Snapshot data
 
-- [ ] Expose the fields required by the renderer.
+- [x] Expose the fields required by the renderer.
 
 Include:
 
@@ -511,7 +511,7 @@ Include:
 
 ### 3.4 Exact mosaic mapping
 
-- [ ] Implement exact cell-to-tile and pointer-to-cell mapping.
+- [x] Implement exact cell-to-tile and pointer-to-cell mapping.
 
 Requirements:
 
@@ -524,7 +524,7 @@ Requirements:
 
 ### 3.5 Display modes
 
-- [ ] Implement selectable scalar visualization.
+- [x] Implement selectable scalar visualization.
 
 Modes:
 
@@ -545,11 +545,11 @@ Color maps:
 
 ### 3.6 Simulation controls
 
-- [ ] Implement play, pause, step, reset, speed, parameters, grid preset, and diagnostics.
+- [x] Implement play, pause, step, reset, speed, parameters, grid preset, and diagnostics.
 
 ### 3.7 Brush editing
 
-- [ ] Implement continuous raise/lower painting.
+- [x] Implement continuous raise/lower painting.
 
 Requirements:
 
@@ -564,13 +564,13 @@ Requirements:
 
 ### 3.8 Polygon editing
 
-- [ ] Implement polygon entry, preview, completion, cancellation, add mode, and set mode.
+- [x] Implement polygon entry, preview, completion, cancellation, add mode, and set mode.
 
 Commit each completed polygon as one Engine operation.
 
 ### 3.9 Built-in scale presets
 
-- [ ] Add `16×16`, `32×32`, `128×128`, and `512×512` debug scenes.
+- [x] Add `16×16`, `32×32`, `128×128`, and `512×512` debug scenes.
 
 Suggested scenes:
 
@@ -581,7 +581,7 @@ Suggested scenes:
 
 ### 3.10 Display tests
 
-- [ ] Test coordinate mapping, resizing, color maps, invalid values, brush mapping, and polygon mapping at all four scales.
+- [x] Test coordinate mapping, resizing, color maps, invalid values, brush mapping, and polygon mapping at all four scales.
 
 ## Phase 3 acceptance criteria
 
