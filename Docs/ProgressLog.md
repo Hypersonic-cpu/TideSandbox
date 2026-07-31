@@ -233,3 +233,30 @@ Complete product XCTest: 28/28 passed
 Normally signed UI suite: 8/8 passed, 112.577 s
 Existing 2D implementation: retained in MosaicGridView.swift
 ```
+
+## 2026-08-01 — 3D Phase 2 Metal lifecycle complete
+
+- Added the SwiftUI → `NSViewRepresentable` → `MTKView` renderer boundary with a
+  deliberately narrow `update`, `resize`, and `draw` API.
+- Configured Retina-aware automatic drawable resizing, sRGB color, a depth
+  attachment, on-demand redraw, an owned command queue, and a compiled default
+  Metal library. Renderer creation fails cleanly when a device, queue, library,
+  function, or pipeline is unavailable.
+- Added an explicit diagnostic triangle pass and the stable
+  `height-field-3d` accessibility identifier. A window-only attachment verified
+  drawable composition without toolbar or inspector overlap.
+- Added monotonically increasing snapshot generations at the MainActor
+  publication boundary. Existing arrays remain copy-on-write immutable values;
+  later renderer stages can skip repeated uploads without comparing field data.
+- Installed Xcode's official optional Metal Toolchain component after the first
+  build reported that the component was absent.
+
+Verification:
+
+```text
+Signed Debug build with compiled .metallib: passed
+Complete product XCTest:                 28/28 passed
+Normally signed UI suite:                 9/9 passed, 117.776 s
+Focused Metal lifecycle UI tests:         2/2 passed
+Diagnostic-triangle visual check:         passed
+```

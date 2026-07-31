@@ -84,6 +84,7 @@ struct EngineDiagnostics: Sendable, Equatable {
 }
 
 struct SimulationSnapshot: Sendable {
+    let generation: UInt64
     let width: Int
     let height: Int
     let domainWidth: Double
@@ -97,6 +98,7 @@ struct SimulationSnapshot: Sendable {
     let diagnostics: EngineDiagnostics
 
     nonisolated init(
+        generation: UInt64 = 0,
         width: Int,
         height: Int,
         domainWidth: Double,
@@ -109,6 +111,7 @@ struct SimulationSnapshot: Sendable {
         wetMask: [UInt8],
         diagnostics: EngineDiagnostics
     ) {
+        self.generation = generation
         self.width = width
         self.height = height
         self.domainWidth = domainWidth
@@ -123,6 +126,7 @@ struct SimulationSnapshot: Sendable {
     }
 
     nonisolated init(_ source: WSEngineSnapshot) {
+        generation = 0
         width = Int(source.width)
         height = Int(source.height)
         domainWidth = source.domainWidth
@@ -150,6 +154,23 @@ struct SimulationSnapshot: Sendable {
         wetMask: [],
         diagnostics: .empty
     )
+
+    nonisolated func withGeneration(_ generation: UInt64) -> SimulationSnapshot {
+        SimulationSnapshot(
+            generation: generation,
+            width: width,
+            height: height,
+            domainWidth: domainWidth,
+            domainHeight: domainHeight,
+            bedElevation: bedElevation,
+            waterDepth: waterDepth,
+            surfaceElevation: surfaceElevation,
+            surfaceDeviation: surfaceDeviation,
+            velocityMagnitude: velocityMagnitude,
+            wetMask: wetMask,
+            diagnostics: diagnostics
+        )
+    }
 
     func values(for mode: DisplayMode) -> [Float] {
         switch mode {

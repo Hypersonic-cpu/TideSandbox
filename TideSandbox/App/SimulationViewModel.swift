@@ -65,12 +65,15 @@ final class SimulationViewModel: ObservableObject {
 
     private let runtime: SimulationRuntime
     private var pendingDiscardAction: PendingDiscardAction?
+    private var nextSnapshotGeneration: UInt64 = 1
 
     init() {
         runtime = SimulationRuntime(seed: SimulationPreset.centerBump32.makeSeed())
         runtime.setSnapshotHandler { [weak self] snapshot in
             Task { @MainActor [weak self] in
-                self?.snapshot = snapshot
+                guard let self else { return }
+                self.snapshot = snapshot.withGeneration(nextSnapshotGeneration)
+                nextSnapshotGeneration &+= 1
             }
         }
     }
