@@ -266,3 +266,84 @@ enum ScalarRasterizer {
         )
     }
 }
+
+enum MaterialRasterizer {
+    static func image(
+        bedElevation: [Float],
+        waterDepth: [Float],
+        width: Int,
+        height: Int,
+        policy: DisplayResolutionPolicy,
+        targetPixelSize: CGSize? = nil
+    ) -> CGImage? {
+        guard width > 0,
+              height > 0,
+              bedElevation.count == width * height,
+              waterDepth.count == width * height else { return nil }
+        let outputWidth: Int
+        let outputHeight: Int
+        if policy == .identicalCells {
+            outputWidth = width
+            outputHeight = height
+        } else {
+            let requestedWidth = min(
+                max(Int((targetPixelSize?.width ?? CGFloat(width)).rounded()), 1),
+                ScalarRasterizer.maximumOutputDimension
+            )
+            let requestedHeight = min(
+                max(Int((targetPixelSize?.height ?? CGFloat(height)).rounded()), 1),
+                ScalarRasterizer.maximumOutputDimension
+            )
+            outputWidth = policy == .areaAverage ? min(requestedWidth, width) : requestedWidth
+            outputHeight = policy == .areaAverage ? min(requestedHeight, height) : requestedHeight
+        }
+        guard let sampledBed = ScalarResampler.values(
+            engineValues: bedElevation,
+            width: width,
+            height: height,
+            outputWidth: outputWidth,
+            outputHeight: outputHeight,
+            policy: policy
+        ), let sampledDepth = ScalarResampler.values(
+            engineValues: waterDepth,
+            width: width,
+            height: height,
+            outputWidth: outputWidth,
+            outputHeight: outputHeight,
+            policy: policy
+        ) else { return nil }
+
+        let bedRange = ScalarRange.finiteRange(of: bedElevation)
+        let observedMaximumDepth = waterDepth.lazy.filter(\.isFinite).max() ?? 0
+        let waterReferenceDepth = max(observedMaximumDepth, 2)
+        var pixels = [UInt8](repeating: 0, count: outputWidth * outputHeight * 4)
+        for index in sampledBed.indices {
+            let color = ColorMap.material(
+                bedElevation: sampledBed[index],
+                waterDepth: sampledDepth[index],
+                bedRange: bedRange,
+                waterReferenceDepth: waterReferenceDepth
+            )
+            let destination = index * 4
+            pixels[destination] = color.red
+            pixels[destination + 1] = color.green
+            pixels[destination + 2] = color.blue
+            pixels[destination + 3] = color.alpha
+        }
+        let data = Data(pixels) as CFData
+        guard let provider = CGDataProvider(data: data) else { return nil }
+        return CGImage(
+            width: outputWidth,
+            height: outputHeight,
+            bitsPerComponent: 8,
+            bitsPerPixel: 32,
+            bytesPerRow: outputWidth * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue),
+            provider: provider,
+            decode: nil,
+            shouldInterpolate: false,
+            intent: .defaultIntent
+        )
+    }
+}

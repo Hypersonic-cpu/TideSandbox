@@ -2,12 +2,24 @@
 
 #include "Grid.hh"
 
+#include <cmath>
 #include <span>
 
 namespace tide::swe {
 
 class WeakNonlinearSolver;
 class TerrainEditor;
+
+struct WorldLimits final {
+    double minimumBedElevation = -1'000.0;
+    double maximumSurfaceElevation = 1'000.0;
+
+    [[nodiscard]] bool isValid() const noexcept {
+        return std::isfinite(minimumBedElevation) &&
+               std::isfinite(maximumSurfaceElevation) &&
+               minimumBedElevation <= maximumSurfaceElevation;
+    }
+};
 
 class SimulationState final {
 public:
@@ -16,10 +28,12 @@ public:
 
     [[nodiscard]] bool initializeLevelLake(GridGeometry geometry,
                                            std::span<const double> bedElevation,
-                                           double initialSurfaceLevel) noexcept;
+                                           double initialSurfaceLevel,
+                                           WorldLimits limits = {}) noexcept;
     [[nodiscard]] bool initializeDepth(GridGeometry geometry,
                                        std::span<const double> bedElevation,
-                                       std::span<const double> waterDepth) noexcept;
+                                       std::span<const double> waterDepth,
+                                       WorldLimits limits = {}) noexcept;
     void reset() noexcept;
 
     [[nodiscard]] const GridGeometry& geometry() const noexcept { return geometry_; }
@@ -27,6 +41,13 @@ public:
     [[nodiscard]] const CellField& waterDepth() const noexcept { return waterDepth_; }
     [[nodiscard]] const FaceField& velX() const noexcept { return velX_; }
     [[nodiscard]] const FaceField& velY() const noexcept { return velY_; }
+    [[nodiscard]] const CellField& initialBedElevation() const noexcept {
+        return initialBedElevation_;
+    }
+    [[nodiscard]] const CellField& initialWaterDepth() const noexcept {
+        return initialWaterDepth_;
+    }
+    [[nodiscard]] const WorldLimits& worldLimits() const noexcept { return worldLimits_; }
     [[nodiscard]] double time() const noexcept { return time_; }
     [[nodiscard]] bool isInitialized() const noexcept { return geometry_.isValid(); }
 
@@ -40,6 +61,7 @@ private:
     FaceField velY_;
     CellField initialBedElevation_;
     CellField initialWaterDepth_;
+    WorldLimits worldLimits_;
     double time_ = 0.0;
 
     friend class WeakNonlinearSolver;

@@ -165,7 +165,7 @@ final class TideSandboxUITests: XCTestCase {
 
         let mosaic = app.descendants(matching: .any)["mosaic-grid"]
         let raiseTool = app.descendants(matching: .any)["terrain-tool-picker"]
-            .radioButtons.matching(NSPredicate(format: "label == %@", "Raise"))
+            .radioButtons.matching(NSPredicate(format: "label == %@", "Add sand"))
             .firstMatch
         XCTAssertTrue(mosaic.exists)
         XCTAssertTrue(raiseTool.exists)
@@ -218,7 +218,7 @@ final class TideSandboxUITests: XCTestCase {
         XCTAssertTrue(mosaic.waitForExistence(timeout: 8))
         XCTAssertTrue(toolPicker.exists)
         let raiseTool = toolPicker.radioButtons.matching(
-            NSPredicate(format: "label == %@", "Raise")
+            NSPredicate(format: "label == %@", "Add sand")
         ).firstMatch
         XCTAssertTrue(raiseTool.exists)
         raiseTool.click()

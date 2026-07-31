@@ -173,6 +173,12 @@ private struct InspectorView: View {
             Button("Load preset", action: model.requestLoadSelectedPreset)
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .accessibilityIdentifier("load-preset-button")
+            Picker("Save state", selection: $model.saveStateSource) {
+                ForEach(SaveStateSource.allCases) { source in
+                    Text(source.title).tag(source)
+                }
+            }
+            .help("Saving the paused current state explicitly makes it the scene's new initial state.")
             HStack {
                 Button("Gallery…", action: showGallery)
                 Spacer()
@@ -335,10 +341,14 @@ private struct InspectorView: View {
     @ViewBuilder
     private var terrainSection: some View {
         InspectorSection(title: "Terrain", systemImage: "mountain.2") {
-            if model.tool == .raise || model.tool == .lower {
+            Picker("Edit state", selection: $model.editTarget) {
+                Text("Initial").tag(WSEditTarget.initialState)
+                Text("Paused current").tag(WSEditTarget.pausedCurrentState)
+            }
+            if model.tool.operation != nil {
                 LabeledSlider(title: "Radius", value: $model.brushRadius, range: 0.5...12,
                               format: "%.1f m")
-                LabeledSlider(title: "Strength", value: $model.brushStrength, range: 0.05...3,
+                LabeledSlider(title: "Rate", value: $model.brushStrength, range: 0.05...3,
                               format: "%.2f m/s")
                 Picker("Falloff", selection: $model.brushFalloff) {
                     Text("Constant").tag(WSBrushFalloff.constant)
@@ -349,12 +359,14 @@ private struct InspectorView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else if model.tool == .polygon {
-                Picker("Mode", selection: $model.polygonMode) {
-                    Text("Add").tag(WSPolygonMode.add)
-                    Text("Set").tag(WSPolygonMode.set)
+                Picker("Material", selection: $model.polygonOperation) {
+                    Text("Add sand").tag(WSMaterialOperation.addSand)
+                    Text("Remove sand").tag(WSMaterialOperation.removeSand)
+                    Text("Add water").tag(WSMaterialOperation.addWater)
+                    Text("Remove water").tag(WSMaterialOperation.removeWater)
                 }
-                LabeledSlider(title: "Elevation", value: $model.polygonElevation,
-                              range: -2...2, format: "%.2f m")
+                LabeledSlider(title: "Amount", value: $model.polygonAmount,
+                              range: 0.01...2, format: "%.2f m")
                 HStack {
                     Text("\(model.polygonPoints.count) vertices")
                         .foregroundStyle(.secondary)

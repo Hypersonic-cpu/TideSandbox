@@ -42,6 +42,31 @@ void profileFinish(const bool enabled, double& destination,
     }
 }
 
+struct HydrostaticFace final {
+    double firstDepth = 0.0;
+    double secondDepth = 0.0;
+    double firstSurface = 0.0;
+    double secondSurface = 0.0;
+};
+
+[[nodiscard]] HydrostaticFace reconstructFace(const double firstBed,
+                                              const double firstDepth,
+                                              const double secondBed,
+                                              const double secondDepth,
+                                              const double minimumWetDepth) noexcept {
+    const double faceBed = std::max(firstBed, secondBed);
+    double connectedFirst = std::max(0.0, firstBed + firstDepth - faceBed);
+    double connectedSecond = std::max(0.0, secondBed + secondDepth - faceBed);
+    connectedFirst = connectedFirst <= minimumWetDepth ? 0.0 : connectedFirst;
+    connectedSecond = connectedSecond <= minimumWetDepth ? 0.0 : connectedSecond;
+    return {
+        .firstDepth = connectedFirst,
+        .secondDepth = connectedSecond,
+        .firstSurface = faceBed + connectedFirst,
+        .secondSurface = faceBed + connectedSecond,
+    };
+}
+
 } // namespace
 
 bool SolverConfiguration::isValid() const noexcept {
@@ -195,6 +220,11 @@ void WeakNonlinearSolver::resetDiagnostics() noexcept {
     diagnostics_ = {};
 }
 
+void WeakNonlinearSolver::stateWasEdited() noexcept {
+    resetDiagnostics();
+    updateDiagnostics(StepStatus::success);
+}
+
 std::size_t WeakNonlinearSolver::estimatedFieldStorageBytes() const noexcept {
     const auto width = state_.geometry_.width;
     const auto height = state_.geometry_.height;
@@ -232,20 +262,16 @@ StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
             [this, width, velocityFactor](std::size_t begin, std::size_t end) noexcept {
         for (auto row = begin; row < end; ++row) {
             for (std::size_t face = 1; face < width; ++face) {
-                const auto leftDepth = state_.waterDepth_(face - 1, row);
-                const auto rightDepth = state_.waterDepth_(face, row);
-                auto leftSurface = surfaceElevation_(face - 1, row);
-                auto rightSurface = surfaceElevation_(face, row);
-                if (leftDepth == 0.0 && rightDepth == 0.0) {
+                const HydrostaticFace hydro = reconstructFace(
+                    state_.bedElevation_(face - 1, row), state_.waterDepth_(face - 1, row),
+                    state_.bedElevation_(face, row), state_.waterDepth_(face, row),
+                    configuration_.minimumWetDepth);
+                if (hydro.firstDepth == 0.0 && hydro.secondDepth == 0.0) {
                     state_.velX_(face, row) = 0.0;
                     continue;
                 }
-                if (leftDepth == 0.0) {
-                    leftSurface = std::min(leftSurface, rightSurface);
-                } else if (rightDepth == 0.0) {
-                    rightSurface = std::min(rightSurface, leftSurface);
-                }
-                state_.velX_(face, row) -= velocityFactor * (rightSurface - leftSurface);
+                state_.velX_(face, row) -= velocityFactor *
+                    (hydro.secondSurface - hydro.firstSurface);
             }
         }
     });
@@ -255,21 +281,16 @@ StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
             [this, width, verticalVelocityFactor](std::size_t begin, std::size_t end) noexcept {
         for (auto row = begin + 1; row < end + 1; ++row) {
             for (std::size_t column = 0; column < width; ++column) {
-                const auto lowerDepth = state_.waterDepth_(column, row - 1);
-                const auto upperDepth = state_.waterDepth_(column, row);
-                auto lowerSurface = surfaceElevation_(column, row - 1);
-                auto upperSurface = surfaceElevation_(column, row);
-                if (lowerDepth == 0.0 && upperDepth == 0.0) {
+                const HydrostaticFace hydro = reconstructFace(
+                    state_.bedElevation_(column, row - 1), state_.waterDepth_(column, row - 1),
+                    state_.bedElevation_(column, row), state_.waterDepth_(column, row),
+                    configuration_.minimumWetDepth);
+                if (hydro.firstDepth == 0.0 && hydro.secondDepth == 0.0) {
                     state_.velY_(column, row) = 0.0;
                     continue;
                 }
-                if (lowerDepth == 0.0) {
-                    lowerSurface = std::min(lowerSurface, upperSurface);
-                } else if (upperDepth == 0.0) {
-                    upperSurface = std::min(upperSurface, lowerSurface);
-                }
                 state_.velY_(column, row) -= verticalVelocityFactor *
-                    (upperSurface - lowerSurface);
+                    (hydro.secondSurface - hydro.firstSurface);
             }
         }
     });
@@ -306,9 +327,12 @@ StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
         for (auto row = begin; row < end; ++row) {
             fluxX_(0, row) = 0.0;
             for (std::size_t face = 1; face < width; ++face) {
-                const auto velocity = state_.velX_(face, row);
-                const auto depth = velocity >= 0.0 ? state_.waterDepth_(face - 1, row)
-                                                   : state_.waterDepth_(face, row);
+                const double velocity = state_.velX_(face, row);
+                const HydrostaticFace hydro = reconstructFace(
+                    state_.bedElevation_(face - 1, row), state_.waterDepth_(face - 1, row),
+                    state_.bedElevation_(face, row), state_.waterDepth_(face, row),
+                    configuration_.minimumWetDepth);
+                const double depth = velocity >= 0.0 ? hydro.firstDepth : hydro.secondDepth;
                 fluxX_(face, row) = depth * velocity;
             }
             fluxX_(width, row) = 0.0;
@@ -322,9 +346,12 @@ StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
                     fluxY_(column, row) = 0.0;
                     continue;
                 }
-                const auto velocity = state_.velY_(column, row);
-                const auto depth = velocity >= 0.0 ? state_.waterDepth_(column, row - 1)
-                                                   : state_.waterDepth_(column, row);
+                const double velocity = state_.velY_(column, row);
+                const HydrostaticFace hydro = reconstructFace(
+                    state_.bedElevation_(column, row - 1), state_.waterDepth_(column, row - 1),
+                    state_.bedElevation_(column, row), state_.waterDepth_(column, row),
+                    configuration_.minimumWetDepth);
+                const double depth = velocity >= 0.0 ? hydro.firstDepth : hydro.secondDepth;
                 fluxY_(column, row) = depth * velocity;
             }
         }
@@ -398,7 +425,7 @@ StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
     // Cleanup is deliberately serial: corrections are rare and the aggregate remains exact.
     const auto cellArea = state_.geometry_.dx() * state_.geometry_.dy();
     for (auto& depth : nextWaterDepth_.values()) {
-        if (depth < configuration_.minimumWetDepth) {
+        if (depth <= configuration_.minimumWetDepth) {
             if (depth != 0.0) {
                 diagnostics_.correctionVolume += std::abs(depth) * cellArea;
                 ++diagnostics_.correctionCount;
@@ -415,9 +442,12 @@ StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
             [this, width](std::size_t begin, std::size_t end) noexcept {
         for (auto row = begin; row < end; ++row) {
             for (std::size_t face = 1; face < width; ++face) {
-                const auto velocity = state_.velX_(face, row);
-                const auto donorDepth = velocity >= 0.0 ? state_.waterDepth_(face - 1, row)
-                                                        : state_.waterDepth_(face, row);
+                const double velocity = state_.velX_(face, row);
+                const HydrostaticFace hydro = reconstructFace(
+                    state_.bedElevation_(face - 1, row), state_.waterDepth_(face - 1, row),
+                    state_.bedElevation_(face, row), state_.waterDepth_(face, row),
+                    configuration_.minimumWetDepth);
+                const double donorDepth = velocity >= 0.0 ? hydro.firstDepth : hydro.secondDepth;
                 if (donorDepth == 0.0) {
                     state_.velX_(face, row) = 0.0;
                 }
@@ -428,9 +458,12 @@ StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
             [this, width](std::size_t begin, std::size_t end) noexcept {
         for (auto row = begin + 1; row < end + 1; ++row) {
             for (std::size_t column = 0; column < width; ++column) {
-                const auto velocity = state_.velY_(column, row);
-                const auto donorDepth = velocity >= 0.0 ? state_.waterDepth_(column, row - 1)
-                                                        : state_.waterDepth_(column, row);
+                const double velocity = state_.velY_(column, row);
+                const HydrostaticFace hydro = reconstructFace(
+                    state_.bedElevation_(column, row - 1), state_.waterDepth_(column, row - 1),
+                    state_.bedElevation_(column, row), state_.waterDepth_(column, row),
+                    configuration_.minimumWetDepth);
+                const double donorDepth = velocity >= 0.0 ? hydro.firstDepth : hydro.secondDepth;
                 if (donorDepth == 0.0) {
                     state_.velY_(column, row) = 0.0;
                 }
@@ -452,8 +485,12 @@ StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
 }
 
 StepStatus WeakNonlinearSolver::inspectFiniteState() noexcept {
-    for (const auto depth : state_.waterDepth_.values()) {
-        if (!std::isfinite(depth) || depth < 0.0) {
+    for (std::size_t index = 0; index < state_.waterDepth_.size(); ++index) {
+        const double bed = state_.bedElevation_.values()[index];
+        const double depth = state_.waterDepth_.values()[index];
+        if (!std::isfinite(bed) || !std::isfinite(depth) ||
+            bed < state_.worldLimits_.minimumBedElevation || depth < 0.0 ||
+            bed + depth > state_.worldLimits_.maximumSurfaceElevation) {
             return StepStatus::nonFiniteState;
         }
     }

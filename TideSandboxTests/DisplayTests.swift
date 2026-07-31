@@ -79,6 +79,66 @@ final class DisplayTests: XCTestCase {
         )
     }
 
+    func testMaterialStateHasScientificWetDryVisualTransitions() throws {
+        let bedRange = ScalarRange(minimum: 0, maximum: 1)
+        let deep = ColorMap.material(
+            bedElevation: 0,
+            waterDepth: 2,
+            bedRange: bedRange,
+            waterReferenceDepth: 2
+        )
+        let shallow = ColorMap.material(
+            bedElevation: 0.5,
+            waterDepth: 0.125,
+            bedRange: bedRange,
+            waterReferenceDepth: 2
+        )
+        let lowDry = ColorMap.material(
+            bedElevation: 0,
+            waterDepth: 0,
+            bedRange: bedRange,
+            waterReferenceDepth: 2
+        )
+        let highDry = ColorMap.material(
+            bedElevation: 1,
+            waterDepth: 0,
+            bedRange: bedRange,
+            waterReferenceDepth: 2
+        )
+        XCTAssertEqual(deep, RGBA(red: 8, green: 68, blue: 120, alpha: 255))
+        XCTAssertEqual(lowDry, RGBA(red: 94, green: 142, blue: 76, alpha: 255))
+        XCTAssertEqual(highDry, RGBA(red: 218, green: 193, blue: 105, alpha: 255))
+        XCTAssertGreaterThan(shallow.red, deep.red)
+        XCTAssertGreaterThan(shallow.green, deep.green)
+        XCTAssertGreaterThan(shallow.blue, deep.blue)
+
+        let snapshot = SimulationSnapshot(
+            width: 4,
+            height: 1,
+            domainWidth: 4,
+            domainHeight: 1,
+            bedElevation: [0, 0.5, 1, 0.5],
+            waterDepth: [2, 0.125, 0, 0.01],
+            surfaceElevation: [2, 0.625, 1, 0.51],
+            surfaceDeviation: [0, 0, 0, 0],
+            velocityMagnitude: [0, 0, 0, 0],
+            wetMask: [1, 1, 0, 1],
+            diagnostics: .empty
+        )
+        let image = try XCTUnwrap(MosaicRaster.image(
+            snapshot: snapshot,
+            mode: .materialState,
+            palette: .grayscale
+        ))
+        let providerData = try XCTUnwrap(image.dataProvider?.data)
+        let bytes = try XCTUnwrap(CFDataGetBytePtr(providerData))
+        XCTAssertEqual(Array(UnsafeBufferPointer(start: bytes, count: 4)),
+                       [deep.red, deep.green, deep.blue, deep.alpha])
+        XCTAssertEqual(Array(UnsafeBufferPointer(start: bytes + 8, count: 4)),
+                       [highDry.red, highDry.green, highDry.blue, highDry.alpha])
+        XCTAssertGreaterThan(bytes[12], deep.red, "newly wetted terrain is immediately pale")
+    }
+
     func testRasterUsesOneUninterpolatedPixelPerCellAndFlipsOnlyDisplayAxis() throws {
         let snapshot = SimulationSnapshot(
             width: 2,
@@ -270,8 +330,8 @@ final class BridgeTests: XCTestCase {
             let seed = preset.makeSeed()
             let count = seed.width * seed.height
             let expectedSurfaceLevel: Double = switch preset {
-            case .flat16, .centerBump32, .unevenBed128: 2
-            case .coastChannel512: 0.55
+            case .flat16, .centerBump32, .unevenBed128: 4
+            case .coastChannel512: 2
             }
 
             XCTAssertEqual(seed.height, seed.width, "\(preset.title) must be square")
@@ -302,10 +362,9 @@ final class BridgeTests: XCTestCase {
                 accuracy: 4 * Double(Float.ulpOfOne)
             )
             if preset == .coastChannel512 {
-                XCTAssertTrue(seed.waterDepth.contains(0), "the raised coast must stay exposed")
-                XCTAssertGreaterThan(try XCTUnwrap(seed.waterDepth.max()), 1)
+                XCTAssertGreaterThan(try XCTUnwrap(seed.waterDepth.min()), 1)
             } else {
-                XCTAssertGreaterThan(try XCTUnwrap(seed.waterDepth.min()), 1.5)
+                XCTAssertGreaterThan(try XCTUnwrap(seed.waterDepth.min()), 3.5)
             }
 
             let bridge = WSWaterEngineBridge(
@@ -350,24 +409,23 @@ final class BridgeTests: XCTestCase {
         ))
         XCTAssertEqual(bridge.advance(0.01), .success)
         XCTAssertEqual(bridge.snapshot().bedElevation.count, 16 * 16 * MemoryLayout<Float>.size)
-        XCTAssertTrue(bridge.applyBrush(
+        XCTAssertTrue(bridge.applyMaterialBrush(
             x: 8.5,
             y: 8.5,
             radius: 2,
-            strength: 0.5,
+            operation: .addSand,
+            amount: 0.5,
             falloff: .constant,
-            minimumBed: -1,
-            maximumBed: 1
-        ))
+            target: .pausedCurrentState
+        ).isChanged)
         let polygon = [2.0, 2.0, 6.0, 2.0, 6.0, 6.0, 2.0, 6.0]
         let polygonData = polygon.withUnsafeBytes { Data($0) }
-        XCTAssertTrue(bridge.applyPolygon(
+        XCTAssertTrue(bridge.applyMaterialPolygon(
             xyCoordinates: polygonData,
-            mode: .set,
-            elevation: -0.25,
-            minimumBed: -1,
-            maximumBed: 1
-        ))
+            operation: .removeSand,
+            amount: 0.25,
+            target: .pausedCurrentState
+        ).isChanged)
         let edited = SimulationSnapshot(bridge.snapshot())
         XCTAssertEqual(edited.bedElevation[3 * 16 + 3], -0.25)
         bridge.reset()

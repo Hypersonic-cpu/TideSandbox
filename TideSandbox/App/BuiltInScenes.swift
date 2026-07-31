@@ -7,6 +7,25 @@ struct SceneSeed: Sendable {
     let domainHeight: Double
     let bedElevation: [Float]
     let waterDepth: [Float]
+    let worldLimits: SceneWorldLimits
+
+    init(
+        width: Int,
+        height: Int,
+        domainWidth: Double,
+        domainHeight: Double,
+        bedElevation: [Float],
+        waterDepth: [Float],
+        worldLimits: SceneWorldLimits = .defaults
+    ) {
+        self.width = width
+        self.height = height
+        self.domainWidth = domainWidth
+        self.domainHeight = domainHeight
+        self.bedElevation = bedElevation
+        self.waterDepth = waterDepth
+        self.worldLimits = worldLimits
+    }
 
     nonisolated var bedData: Data { bedElevation.binaryData }
     nonisolated var depthData: Data { waterDepth.binaryData }
@@ -45,7 +64,7 @@ enum SimulationPreset: String, CaseIterable, Identifiable, Sendable {
                     0.08 * sin((x + y) * .pi * 7)
             }
         case .coastChannel512:
-            return Self.levelLake(size: 512, surfaceLevel: 0.55) { x, y in
+            return Self.levelLake(size: 512, surfaceLevel: 2.0) { x, y in
                 let coast = -0.25 + 0.9 * x
                 let channelDistance = (y - 0.52) / 0.075
                 let channel = 0.55 * exp(-(channelDistance * channelDistance))
@@ -57,7 +76,7 @@ enum SimulationPreset: String, CaseIterable, Identifiable, Sendable {
 
     private static func levelLake(
         size: Int,
-        surfaceLevel: Double = 2,
+        surfaceLevel: Double = 4,
         bed: (_ normalizedX: Double, _ normalizedY: Double) -> Double
     ) -> SceneSeed {
         let count = size * size

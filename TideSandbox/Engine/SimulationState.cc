@@ -15,18 +15,22 @@ SimulationState::SimulationState(GridGeometry geometry) {
 
 bool SimulationState::initializeLevelLake(GridGeometry geometry,
                                           std::span<const double> bedElevation,
-                                          double initialSurfaceLevel) noexcept {
+                                          double initialSurfaceLevel,
+                                          WorldLimits limits) noexcept {
     if (!geometry.isValid() || bedElevation.size() != geometry.width * geometry.height ||
-        !std::isfinite(initialSurfaceLevel)) {
+        !std::isfinite(initialSurfaceLevel) || !limits.isValid() ||
+        initialSurfaceLevel > limits.maximumSurfaceElevation) {
         return false;
     }
     for (const auto value : bedElevation) {
-        if (!std::isfinite(value)) {
+        if (!std::isfinite(value) || value < limits.minimumBedElevation ||
+            value > limits.maximumSurfaceElevation) {
             return false;
         }
     }
 
     resize(geometry);
+    worldLimits_ = limits;
     std::copy(bedElevation.begin(), bedElevation.end(), bedElevation_.values().begin());
     std::copy(bedElevation.begin(), bedElevation.end(), initialBedElevation_.values().begin());
     for (std::size_t index = 0; index < bedElevation.size(); ++index) {
@@ -42,19 +46,23 @@ bool SimulationState::initializeLevelLake(GridGeometry geometry,
 
 bool SimulationState::initializeDepth(GridGeometry geometry,
                                       std::span<const double> bedElevation,
-                                      std::span<const double> waterDepth) noexcept {
+                                      std::span<const double> waterDepth,
+                                      WorldLimits limits) noexcept {
     if (!geometry.isValid() || bedElevation.size() != geometry.width * geometry.height ||
-        waterDepth.size() != bedElevation.size()) {
+        waterDepth.size() != bedElevation.size() || !limits.isValid()) {
         return false;
     }
     for (std::size_t index = 0; index < bedElevation.size(); ++index) {
         if (!std::isfinite(bedElevation[index]) || !std::isfinite(waterDepth[index]) ||
-            waterDepth[index] < 0.0) {
+            bedElevation[index] < limits.minimumBedElevation ||
+            bedElevation[index] > limits.maximumSurfaceElevation || waterDepth[index] < 0.0 ||
+            bedElevation[index] + waterDepth[index] > limits.maximumSurfaceElevation) {
             return false;
         }
     }
 
     resize(geometry);
+    worldLimits_ = limits;
     std::copy(bedElevation.begin(), bedElevation.end(), bedElevation_.values().begin());
     std::copy(bedElevation.begin(), bedElevation.end(), initialBedElevation_.values().begin());
     std::copy(waterDepth.begin(), waterDepth.end(), waterDepth_.values().begin());

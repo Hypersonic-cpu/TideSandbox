@@ -309,12 +309,12 @@ namespace {
         std::uint64_t velY;
     };
     constexpr GoldenCase cases[] = {
-        {16, 9, 25, 0xe53d405add0eb75cULL, 0xeea22af86fbc9f4cULL,
-         0x6b4c01398899b87aULL},
-        {128, 128, 25, 0x911c89d32db6e6e9ULL, 0xce31bca6c26caf5cULL,
-         0xe08f64226e564d90ULL},
-        {512, 512, 5, 0xa9cd1b27cfc8bc8cULL, 0x642e24b4a604f6d6ULL,
-         0xdd8244fff5566ce2ULL},
+        {16, 9, 25, 0x3ef7b3176d5a3cbcULL, 0xca38aaa11ba9cabdULL,
+         0x293b69a8e22e4cd2ULL},
+        {128, 128, 25, 0x1172bc020a14917cULL, 0xfd05c1f1b6db8c97ULL,
+         0xf04457e3827d8d24ULL},
+        {512, 512, 5, 0x0c772ed816c0e973ULL, 0x9896f9bbd2960747ULL,
+         0xd0cb8529892dcaedULL},
     };
     for (const auto& golden : cases) {
         SimulationState state = makeGoldenState(golden.width, golden.height);
@@ -329,6 +329,53 @@ namespace {
         XCTAssertEqual(fingerprint(state.waterDepth().values()), golden.depth);
         XCTAssertEqual(fingerprint(state.velX().values()), golden.velX);
         XCTAssertEqual(fingerprint(state.velY().values()), golden.velY);
+    }
+}
+
+- (void)testWaterBumpAndDepressionHaveExactVolumeAndLaunchFiniteWaves {
+    for (const std::size_t size : {32UL, 128UL}) {
+        const Point2D region[]{
+            {static_cast<double>(size) * 0.375, static_cast<double>(size) * 0.375},
+            {static_cast<double>(size) * 0.625, static_cast<double>(size) * 0.375},
+            {static_cast<double>(size) * 0.625, static_cast<double>(size) * 0.625},
+            {static_cast<double>(size) * 0.375, static_cast<double>(size) * 0.625},
+        };
+        for (const MaterialOperation operation : {
+                 MaterialOperation::addWater, MaterialOperation::removeWater}) {
+            SimulationState state = makeState(size, size);
+            TerrainEditor editor(state);
+            const double before = volume(state);
+            const TerrainEditResult edit = editor.applyPolygon({
+                region, {operation, 0.2, EditTarget::initialState}
+            });
+            const double expectedSign = operation == MaterialOperation::addWater ? 1.0 : -1.0;
+            const double expectedDelta = expectedSign * 0.2 *
+                static_cast<double>(edit.changedCells) * state.geometry().dx() *
+                state.geometry().dy();
+            XCTAssertEqual(edit.status, TerrainEditStatus::success);
+            XCTAssertEqualWithAccuracy(edit.waterVolumeDelta, expectedDelta,
+                                       conservationTolerance(state));
+            XCTAssertEqualWithAccuracy(volume(state) - before, expectedDelta,
+                                       conservationTolerance(state));
+            XCTAssertEqual(state.time(), 0.0);
+            XCTAssertEqual(*std::max_element(state.velX().values().begin(),
+                                             state.velX().values().end()), 0.0);
+
+            SolverConfiguration configuration;
+            configuration.workerCount = 4;
+            configuration.minimumWetDepth = 1.0e-8;
+            WeakNonlinearSolver solver(state, configuration);
+            const double editedVolume = volume(state);
+            for (std::size_t step = 0; step < 500; ++step) {
+                XCTAssertEqual(solver.stepOnce(0.001), StepStatus::success);
+            }
+            XCTAssertGreaterThan(solver.diagnostics().maximumAbsVelX +
+                                  solver.diagnostics().maximumAbsVelY, 0.0);
+            XCTAssertEqualWithAccuracy(volume(state), editedVolume,
+                                       conservationTolerance(state));
+            XCTAssertTrue(allFinite(state.waterDepth().values()));
+            XCTAssertGreaterThanOrEqual(solver.diagnostics().minimumDepth, 0.0);
+        }
     }
 }
 
@@ -385,40 +432,44 @@ namespace {
     }
 }
 
-- (void)testBrushFalloffAccumulationClampingAndBoundaries {
+- (void)testSubmergedSandEditPreservesSurfaceAndDeletesExactWaterVolume {
     for (const std::size_t size : {32UL, 128UL}) {
-        SimulationState state = makeState(size, size);
+        SimulationState state = makeUnevenLake(size);
+        SolverConfiguration configuration;
+        configuration.workerCount = 4;
+        configuration.linearDamping = 0.0;
+        WeakNonlinearSolver solver(state, configuration);
+        for (std::size_t step = 0; step < 100; ++step) {
+            XCTAssertEqual(solver.stepOnce(0.001), StepStatus::success);
+        }
         TerrainEditor editor(state);
         const double center = static_cast<double>(size / 2) + 0.5;
-        const BrushCommand centerBrush{{center, center}, 3.0, 0.5, BrushFalloff::linear,
-                                       -1.0, 0.75};
-        XCTAssertEqual(editor.applyBrush(centerBrush), TerrainEditStatus::success);
-        XCTAssertEqual(editor.applyBrush(centerBrush), TerrainEditStatus::success);
-        XCTAssertEqual(state.bedElevation()(size / 2, size / 2), 0.75);
-        XCTAssertGreaterThan(state.bedElevation()(size / 2 + 1, size / 2), 0.0);
-        XCTAssertEqual(state.bedElevation()(0, size - 1), 0.0);
-
-        SimulationState smoothState = makeState(size, size);
-        TerrainEditor smoothEditor(smoothState);
-        const BrushCommand smoothBrush{{center, center}, 3.0, 0.5, BrushFalloff::smooth,
-                                       -1.0, 1.0};
-        XCTAssertEqual(smoothEditor.applyBrush(smoothBrush), TerrainEditStatus::success);
-        const double normalizedWeight = (2.0 / 3.0) * (2.0 / 3.0) *
-                                        (3.0 - 2.0 * (2.0 / 3.0));
-        XCTAssertEqualWithAccuracy(smoothState.bedElevation()(size / 2 + 1, size / 2),
-                                   0.5 * normalizedWeight,
-                                   4.0 * std::numeric_limits<double>::epsilon());
-
-        const BrushCommand boundaryBrush{{0.0, 0.0}, 4.0, -2.0, BrushFalloff::constant,
-                                         -0.5, 0.75};
-        XCTAssertEqual(editor.applyBrush(boundaryBrush), TerrainEditStatus::success);
-        XCTAssertEqual(state.bedElevation()(0, 0), -0.5);
-        XCTAssertEqual(editor.applyBrush({{0.0, 0.0}, 0.0, 1.0}),
-                       TerrainEditStatus::invalidCommand);
+        const double volumeBefore = volume(state);
+        const BrushCommand command{
+            {{center, center}, static_cast<double>(size) / 6.0, BrushFalloff::smooth},
+            {MaterialOperation::addSand, 0.25, EditTarget::initialState},
+        };
+        const TerrainEditResult result = editor.applyBrush(command);
+        XCTAssertEqual(result.status, TerrainEditStatus::success);
+        XCTAssertGreaterThan(result.changedCells, 0UL);
+        XCTAssertEqualWithAccuracy(result.waterVolumeDelta, -result.sandVolumeDelta,
+                                   conservationTolerance(state));
+        XCTAssertEqualWithAccuracy(volume(state) - volumeBefore, result.waterVolumeDelta,
+                                   conservationTolerance(state));
+        XCTAssertEqual(state.time(), 0.0);
+        for (std::size_t index = 0; index < state.waterDepth().size(); ++index) {
+            XCTAssertEqualWithAccuracy(state.bedElevation().values()[index] +
+                                       state.waterDepth().values()[index], 2.0, 1.0e-12);
+        }
+        for (std::size_t step = 0; step < 1'000; ++step) {
+            XCTAssertEqual(solver.stepOnce(0.001), StepStatus::success);
+        }
+        XCTAssertLessThan(solver.diagnostics().maximumAbsVelX, 1.0e-10);
+        XCTAssertLessThan(solver.diagnostics().maximumAbsVelY, 1.0e-10);
     }
 }
 
-- (void)testPolygonModesConcavityOrientationAndValidation {
+- (void)testBrushAndPolygonUseIdenticalMaterialKernelAndValidateAtomically {
     const Point2D concave[]{{4.0, 4.0}, {12.0, 4.0}, {12.0, 8.0},
                             {8.0, 8.0}, {8.0, 12.0}, {4.0, 12.0}};
     const Point2D reversed[]{{4.0, 12.0}, {8.0, 12.0}, {8.0, 8.0},
@@ -428,32 +479,242 @@ namespace {
         SimulationState second = makeState(size, size);
         TerrainEditor firstEditor(first);
         TerrainEditor secondEditor(second);
-        XCTAssertEqual(firstEditor.applyPolygon({concave, PolygonMode::add, 0.5, -1.0, 1.0}),
+        const MaterialEdit edit{MaterialOperation::addWater, 0.5,
+                                EditTarget::initialState};
+        XCTAssertEqual(firstEditor.applyPolygon({concave, edit}).status,
                        TerrainEditStatus::success);
-        XCTAssertEqual(secondEditor.applyPolygon({reversed, PolygonMode::add, 0.5, -1.0, 1.0}),
+        XCTAssertEqual(secondEditor.applyPolygon({reversed, edit}).status,
                        TerrainEditStatus::success);
         XCTAssertEqual(maximumDifference(first.bedElevation().values(),
                                          second.bedElevation().values()), 0.0);
-        XCTAssertEqual(first.bedElevation()(5, 5), 0.5);
-        XCTAssertEqual(first.bedElevation()(10, 10), 0.0);
-        XCTAssertEqual(firstEditor.applyPolygon({concave, PolygonMode::set, -0.25, -1.0, 1.0}),
-                       TerrainEditStatus::success);
-        XCTAssertEqual(first.bedElevation()(5, 5), -0.25);
+        XCTAssertEqual(maximumDifference(first.waterDepth().values(),
+                                         second.waterDepth().values()), 0.0);
+        XCTAssertEqual(first.waterDepth()(5, 5), 1.5);
+        XCTAssertEqual(first.waterDepth()(10, 10), 1.0);
 
-        const Point2D triangle[]{{1.0, 1.0}, {5.0, 1.0}, {1.0, 5.0}};
-        XCTAssertEqual(firstEditor.applyPolygon({triangle, PolygonMode::add, 0.2, -1.0, 1.0}),
-                       TerrainEditStatus::success);
-        const Point2D rectangle[]{{16.0, 16.0}, {20.0, 16.0}, {20.0, 20.0}, {16.0, 20.0}};
-        XCTAssertEqual(firstEditor.applyPolygon({rectangle, PolygonMode::set, 0.8, -1.0, 1.0}),
-                       TerrainEditStatus::success);
-        XCTAssertEqual(first.bedElevation()(17, 17), 0.8);
+        const std::vector<double> before(first.waterDepth().values().begin(),
+                                         first.waterDepth().values().end());
         const Point2D bowTie[]{{0.0, 0.0}, {4.0, 4.0}, {0.0, 4.0}, {4.0, 0.0}};
-        XCTAssertEqual(firstEditor.applyPolygon({bowTie, PolygonMode::set, 1.0, -1.0, 1.0}),
+        XCTAssertEqual(firstEditor.applyPolygon({bowTie, edit}).status,
                        TerrainEditStatus::malformedPolygon);
+        XCTAssertEqual(maximumDifference(before, first.waterDepth().values()), 0.0);
         const Point2D line[]{{0.0, 0.0}, {1.0, 1.0}, {2.0, 2.0}};
-        XCTAssertEqual(firstEditor.applyPolygon({line, PolygonMode::set, 1.0, -1.0, 1.0}),
+        XCTAssertEqual(firstEditor.applyPolygon({line, edit}).status,
                        TerrainEditStatus::malformedPolygon);
     }
+}
+
+- (void)testPausedMaterialEditsRetainTimeMixMomentumAndResetToEditedInitialState {
+    for (const MaterialOperation operation : {
+             MaterialOperation::addSand, MaterialOperation::removeSand,
+             MaterialOperation::addWater, MaterialOperation::removeWater}) {
+        SimulationState state = makeState(32, 32, 0.4);
+        SolverConfiguration configuration;
+        configuration.workerCount = 1;
+        configuration.minimumWetDepth = 1.0e-8;
+        WeakNonlinearSolver solver(state, configuration);
+        for (std::size_t step = 0; step < 150; ++step) {
+            XCTAssertEqual(solver.stepOnce(0.002), StepStatus::success);
+        }
+        const double editTime = state.time();
+        const std::vector<double> velocityBefore(state.velX().values().begin(),
+                                                 state.velX().values().end());
+        const Point2D region[]{{8.0, 8.0}, {24.0, 8.0}, {24.0, 24.0}, {8.0, 24.0}};
+        TerrainEditor editor(state, configuration.minimumWetDepth);
+        const TerrainEditResult result = editor.applyPolygon({
+            region, {operation, 0.1, EditTarget::pausedCurrentState}
+        });
+        XCTAssertEqual(result.status, TerrainEditStatus::success);
+        XCTAssertGreaterThan(result.changedCells, 0UL);
+        XCTAssertEqual(state.time(), editTime);
+        if (operation == MaterialOperation::addSand ||
+            operation == MaterialOperation::removeWater) {
+            XCTAssertLessThanOrEqual(maximumDifference(velocityBefore, state.velX().values()),
+                                     1.0e-12);
+        } else {
+            XCTAssertGreaterThan(maximumDifference(velocityBefore, state.velX().values()), 0.0);
+        }
+        for (std::size_t step = 0; step < 500; ++step) {
+            XCTAssertEqual(solver.stepOnce(0.001), StepStatus::success);
+        }
+        XCTAssertTrue(allFinite(state.waterDepth().values()));
+        XCTAssertTrue(allFinite(state.velX().values()));
+        XCTAssertTrue(allFinite(state.velY().values()));
+        XCTAssertGreaterThanOrEqual(solver.diagnostics().minimumDepth, 0.0);
+    }
+
+    SimulationState resetState = makeState(32, 32);
+    TerrainEditor resetEditor(resetState);
+    const BrushCommand initialEdit{
+        {{16.5, 16.5}, 4.0, BrushFalloff::constant},
+        {MaterialOperation::removeSand, 0.25, EditTarget::initialState},
+    };
+    XCTAssertTrue(resetEditor.applyBrush(initialEdit).changed());
+    const std::vector<double> editedInitial(resetState.bedElevation().values().begin(),
+                                            resetState.bedElevation().values().end());
+    WeakNonlinearSolver resetSolver(resetState);
+    XCTAssertEqual(resetSolver.advance(0.1), StepStatus::success);
+    resetState.reset();
+    XCTAssertEqual(maximumDifference(editedInitial, resetState.bedElevation().values()), 0.0);
+    XCTAssertEqual(resetState.time(), 0.0);
+}
+
+- (void)testHydrostaticShorelineBlocksHighGroundAndInundatesLowGround {
+    for (const std::size_t size : {32UL, 128UL}) {
+        const GridGeometry geometry{size, size, static_cast<double>(size),
+                                    static_cast<double>(size)};
+        std::vector<double> islandBed(size * size, 0.0);
+        std::vector<double> islandDepth(size * size, 1.0);
+        for (std::size_t row = size / 3; row < 2 * size / 3; ++row) {
+            for (std::size_t column = size / 3; column < 2 * size / 3; ++column) {
+                islandBed[row * size + column] = 2.0;
+                islandDepth[row * size + column] = 0.0;
+            }
+        }
+        SimulationState island;
+        XCTAssertTrue(island.initializeDepth(geometry, islandBed, islandDepth));
+        SolverConfiguration configuration;
+        configuration.workerCount = 4;
+        configuration.minimumWetDepth = 1.0e-8;
+        configuration.linearDamping = 0.0;
+        WeakNonlinearSolver islandSolver(island, configuration);
+        const double islandVolume = volume(island);
+        for (std::size_t step = 0; step < 1'000; ++step) {
+            XCTAssertEqual(islandSolver.stepOnce(0.001), StepStatus::success);
+        }
+        XCTAssertEqualWithAccuracy(volume(island), islandVolume, conservationTolerance(island));
+        XCTAssertEqual(island.waterDepth()(size / 2, size / 2), 0.0);
+        XCTAssertLessThan(islandSolver.diagnostics().maximumAbsVelX, 1.0e-12);
+        XCTAssertLessThan(islandSolver.diagnostics().maximumAbsVelY, 1.0e-12);
+
+        std::vector<double> lowBed(size * size, 0.0);
+        std::vector<double> lowDepth(size * size, 0.0);
+        for (std::size_t row = 0; row < size; ++row) {
+            for (std::size_t column = 0; column < size / 2; ++column) {
+                lowDepth[row * size + column] = 1.0;
+            }
+        }
+        SimulationState inundation;
+        XCTAssertTrue(inundation.initializeDepth(geometry, lowBed, lowDepth));
+        WeakNonlinearSolver inundationSolver(inundation, configuration);
+        for (std::size_t step = 0; step < 500; ++step) {
+            XCTAssertEqual(inundationSolver.stepOnce(0.001), StepStatus::success);
+        }
+        XCTAssertGreaterThan(inundation.waterDepth()(size / 2, size / 2), 0.0);
+        XCTAssertTrue(allFinite(inundation.waterDepth().values()));
+    }
+}
+
+- (void)testShorelineRecessionReachesExactlyDryWithoutNegativeDepth {
+    for (const std::size_t size : {32UL, 128UL}) {
+        const GridGeometry geometry{size, size, static_cast<double>(size),
+                                    static_cast<double>(size)};
+        const std::vector<double> bed(size * size, 0.0);
+        std::vector<double> depth(size * size, 0.0);
+        for (std::size_t row = 0; row < size; ++row) {
+            for (std::size_t column = 0; column < size / 2; ++column) {
+                depth[row * size + column] = 0.125;
+            }
+        }
+        SimulationState state;
+        XCTAssertTrue(state.initializeDepth(geometry, bed, depth));
+        TerrainEditor editor(state, 1.0e-8);
+        const Point2D wetHalf[]{{0.0, 0.0}, {static_cast<double>(size) / 2.0, 0.0},
+                                {static_cast<double>(size) / 2.0,
+                                 static_cast<double>(size)},
+                                {0.0, static_cast<double>(size)}};
+        const double volumeBefore = volume(state);
+        const TerrainEditResult result = editor.applyPolygon({
+            wetHalf,
+            {MaterialOperation::removeWater, 0.125, EditTarget::pausedCurrentState},
+        });
+        const std::size_t expectedDryCells = size * size / 2;
+        XCTAssertEqual(result.status, TerrainEditStatus::success);
+        XCTAssertEqual(result.changedCells, expectedDryCells);
+        XCTAssertEqual(result.newlyDryCells, expectedDryCells);
+        XCTAssertEqual(result.newlyWetCells, 0UL);
+        XCTAssertEqualWithAccuracy(result.waterVolumeDelta, -volumeBefore,
+                                   conservationTolerance(state));
+        XCTAssertEqual(volume(state), 0.0);
+        XCTAssertEqual(*std::min_element(state.waterDepth().values().begin(),
+                                         state.waterDepth().values().end()), 0.0);
+        XCTAssertEqual(*std::max_element(state.waterDepth().values().begin(),
+                                         state.waterDepth().values().end()), 0.0);
+
+        SolverConfiguration configuration;
+        configuration.workerCount = 4;
+        configuration.minimumWetDepth = 1.0e-8;
+        WeakNonlinearSolver solver(state, configuration);
+        solver.stateWasEdited();
+        for (std::size_t step = 0; step < 500; ++step) {
+            XCTAssertEqual(solver.stepOnce(0.001), StepStatus::success);
+        }
+        XCTAssertEqual(solver.diagnostics().minimumDepth, 0.0);
+        XCTAssertEqual(solver.diagnostics().maximumDepth, 0.0);
+        XCTAssertEqual(solver.diagnostics().maximumAbsVelX, 0.0);
+        XCTAssertEqual(solver.diagnostics().maximumAbsVelY, 0.0);
+        XCTAssertEqual(solver.diagnostics().correctionCount, 0UL);
+    }
+}
+
+- (void)testCombinedPausedEditsResumeStablyAt512 {
+    constexpr std::size_t size = 512;
+    SimulationState state = makeState(size, size, 0.4);
+    SolverConfiguration configuration;
+    configuration.workerCount = 4;
+    configuration.minimumWetDepth = 1.0e-8;
+    configuration.linearDamping = 0.0;
+    WeakNonlinearSolver solver(state, configuration);
+    for (std::size_t step = 0; step < 20; ++step) {
+        XCTAssertEqual(solver.stepOnce(0.001), StepStatus::success);
+    }
+    const double editTime = state.time();
+    TerrainEditor editor(state, configuration.minimumWetDepth);
+    constexpr double amount = 0.05;
+    const Point2D regions[][4] = {
+        {{48.0, 48.0}, {208.0, 48.0}, {208.0, 208.0}, {48.0, 208.0}},
+        {{304.0, 48.0}, {464.0, 48.0}, {464.0, 208.0}, {304.0, 208.0}},
+        {{48.0, 304.0}, {208.0, 304.0}, {208.0, 464.0}, {48.0, 464.0}},
+        {{304.0, 304.0}, {464.0, 304.0}, {464.0, 464.0}, {304.0, 464.0}},
+    };
+    constexpr MaterialOperation operations[]{
+        MaterialOperation::addSand,
+        MaterialOperation::removeSand,
+        MaterialOperation::addWater,
+        MaterialOperation::removeWater,
+    };
+    for (std::size_t editIndex = 0; editIndex < std::size(operations); ++editIndex) {
+        const double volumeBefore = volume(state);
+        const TerrainEditResult result = editor.applyPolygon({
+            regions[editIndex],
+            {operations[editIndex], amount, EditTarget::pausedCurrentState},
+        });
+        XCTAssertEqual(result.status, TerrainEditStatus::success);
+        XCTAssertEqual(result.changedCells, 160UL * 160UL);
+        XCTAssertEqualWithAccuracy(volume(state) - volumeBefore, result.waterVolumeDelta,
+                                   conservationTolerance(state));
+        XCTAssertEqual(state.time(), editTime);
+        solver.stateWasEdited();
+        XCTAssertTrue(solver.diagnostics().finite);
+        XCTAssertEqualWithAccuracy(solver.diagnostics().totalVolume, volume(state),
+                                   conservationTolerance(state));
+    }
+
+    const double editedVolume = volume(state);
+    const double freshStableTimeStep = solver.stableTimeStep();
+    XCTAssertTrue(std::isfinite(freshStableTimeStep));
+    XCTAssertGreaterThan(freshStableTimeStep, 0.0);
+    for (std::size_t step = 0; step < 500; ++step) {
+        XCTAssertEqual(solver.stepOnce(0.0005), StepStatus::success);
+    }
+    XCTAssertTrue(allFinite(state.waterDepth().values()));
+    XCTAssertTrue(allFinite(state.velX().values()));
+    XCTAssertTrue(allFinite(state.velY().values()));
+    XCTAssertTrue(solver.diagnostics().finite);
+    XCTAssertGreaterThanOrEqual(solver.diagnostics().minimumDepth, 0.0);
+    XCTAssertEqual(solver.diagnostics().correctionCount, 0UL);
+    XCTAssertEqualWithAccuracy(volume(state), editedVolume,
+                               conservationTolerance(state));
 }
 
 @end

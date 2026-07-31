@@ -4,8 +4,10 @@ import Foundation
 
 enum TerrainTool: String, CaseIterable, Identifiable {
     case inspect
-    case raise
-    case lower
+    case addSand
+    case removeSand
+    case addWater
+    case removeWater
     case polygon
 
     var id: Self { self }
@@ -13,8 +15,10 @@ enum TerrainTool: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .inspect: "Inspect"
-        case .raise: "Raise"
-        case .lower: "Lower"
+        case .addSand: "Add sand"
+        case .removeSand: "Remove sand"
+        case .addWater: "Add water"
+        case .removeWater: "Remove water"
         case .polygon: "Polygon"
         }
     }
@@ -22,10 +26,32 @@ enum TerrainTool: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .inspect: "cursorarrow"
-        case .raise: "mountain.2"
-        case .lower: "eraser"
+        case .addSand: "mountain.2"
+        case .removeSand: "eraser"
+        case .addWater: "drop.fill"
+        case .removeWater: "drop"
         case .polygon: "point.3.connected.trianglepath.dotted"
         }
+    }
+
+    var operation: WSMaterialOperation? {
+        switch self {
+        case .inspect, .polygon: nil
+        case .addSand: .addSand
+        case .removeSand: .removeSand
+        case .addWater: .addWater
+        case .removeWater: .removeWater
+        }
+    }
+}
+
+enum SaveStateSource: String, CaseIterable, Identifiable {
+    case initialState
+    case pausedCurrentState
+
+    var id: Self { self }
+    var title: String {
+        self == .initialState ? "Stored initial state" : "Paused current state"
     }
 }
 
@@ -54,7 +80,7 @@ final class SimulationViewModel: ObservableObject {
     @Published var showWetCellMask = false
     @Published var showCameraTarget = false
     @Published var selectedPreset: SimulationPreset = .centerBump32
-    @Published var displayMode: DisplayMode = .waterDepth
+    @Published var displayMode: DisplayMode = .materialState
     @Published var palette: ColorPalette = .blueWhite
     @Published var resolutionPolicy: DisplayResolutionPolicy = .identicalCells
     @Published var tool: TerrainTool = .inspect
@@ -68,8 +94,12 @@ final class SimulationViewModel: ObservableObject {
     @Published var brushRadius = 2.5
     @Published var brushStrength = 0.5
     @Published var brushFalloff: WSBrushFalloff = .smooth
-    @Published var polygonMode: WSPolygonMode = .add
-    @Published var polygonElevation = 0.25
+    @Published var editTarget: WSEditTarget = .initialState
+    @Published var polygonOperation: WSMaterialOperation = .addSand
+    @Published var polygonAmount = 0.25
+    @Published var saveStateSource: SaveStateSource = .initialState
+    @Published var minimumBedElevation = SceneWorldLimits.defaults.minimumBedElevation
+    @Published var maximumSurfaceElevation = SceneWorldLimits.defaults.maximumSurfaceElevation
     @Published private(set) var polygonPoints: [CGPoint] = []
     @Published private(set) var brushPreviewPoint: CGPoint?
     @Published private(set) var currentScene: SceneDocument?
@@ -79,13 +109,22 @@ final class SimulationViewModel: ObservableObject {
     private let runtime: SimulationRuntime
     private var pendingDiscardAction: PendingDiscardAction?
     private var nextSnapshotGeneration: UInt64 = 1
+    private var storedInitialBedElevation = [Float]()
+    private var storedInitialWaterDepth = [Float]()
 
     init() {
-        runtime = SimulationRuntime(seed: SimulationPreset.centerBump32.makeSeed())
-        runtime.setSnapshotHandler { [weak self] snapshot in
+        let seed = SimulationPreset.centerBump32.makeSeed()
+        storedInitialBedElevation = seed.bedElevation
+        storedInitialWaterDepth = seed.waterDepth
+        runtime = SimulationRuntime(seed: seed)
+        runtime.setSnapshotHandler { [weak self] snapshot, initialStateChanged in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.snapshot = snapshot.withGeneration(nextSnapshotGeneration)
+                if initialStateChanged {
+                    storedInitialBedElevation = snapshot.bedElevation
+                    storedInitialWaterDepth = snapshot.waterDepth
+                }
                 nextSnapshotGeneration &+= 1
             }
         }
@@ -117,12 +156,7 @@ final class SimulationViewModel: ObservableObject {
     func reset() {
         pause()
         polygonPoints.removeAll(keepingCapacity: true)
-        if let currentScene {
-            loadScene(currentScene)
-        } else {
-            runtime.reset()
-            isDirty = false
-        }
+        runtime.reset()
     }
 
     func requestLoadSelectedPreset() {
@@ -158,10 +192,18 @@ final class SimulationViewModel: ObservableObject {
               snapshot.waterDepth.count == snapshot.width * snapshot.height else {
             throw ScenePackageError.invalidDimensions
         }
+        let bedElevation = saveStateSource == .initialState
+            ? storedInitialBedElevation : snapshot.bedElevation
+        let waterDepth = saveStateSource == .initialState
+            ? storedInitialWaterDepth : snapshot.waterDepth
+        guard bedElevation.count == snapshot.width * snapshot.height,
+              waterDepth.count == snapshot.width * snapshot.height else {
+            throw ScenePackageError.invalidDimensions
+        }
         let preview = try ScenePreviewRenderer.pngData(
             width: snapshot.width,
             height: snapshot.height,
-            waterDepth: snapshot.waterDepth
+            waterDepth: waterDepth
         )
         let now = Date()
         let base = currentScene
@@ -176,6 +218,10 @@ final class SimulationViewModel: ObservableObject {
             domainHeight: snapshot.domainHeight,
             initializationMode: .explicitDepth,
             solver: solverParameters,
+            worldLimits: SceneWorldLimits(
+                minimumBedElevation: minimumBedElevation,
+                maximumSurfaceElevation: maximumSurfaceElevation
+            ),
             resources: base?.manifest.resources ?? .standard,
             source: base?.manifest.source ?? .user,
             description: base?.manifest.description,
@@ -183,8 +229,8 @@ final class SimulationViewModel: ObservableObject {
         )
         return SceneDocument(
             manifest: manifest,
-            bedElevation: snapshot.bedElevation,
-            initialWaterDepth: snapshot.waterDepth,
+            bedElevation: bedElevation,
+            initialWaterDepth: waterDepth,
             previewPNG: preview,
             notesMarkdown: base?.notesMarkdown,
             packageURL: base?.packageURL,
@@ -193,7 +239,11 @@ final class SimulationViewModel: ObservableObject {
     }
 
     func acceptSavedScene(_ document: SceneDocument) {
+        if saveStateSource == .pausedCurrentState {
+            loadScene(document)
+        }
         currentScene = document
+        saveStateSource = .initialState
         isDirty = false
     }
 
@@ -215,11 +265,16 @@ final class SimulationViewModel: ObservableObject {
         pause()
         resetCameraFraming()
         polygonPoints.removeAll(keepingCapacity: true)
-        displayMode = .waterDepth
+        displayMode = .materialState
         palette = displayMode.preferredPalette
         currentScene = nil
         isDirty = false
-        runtime.load(selectedPreset.makeSeed())
+        let seed = selectedPreset.makeSeed()
+        storedInitialBedElevation = seed.bedElevation
+        storedInitialWaterDepth = seed.waterDepth
+        minimumBedElevation = seed.worldLimits.minimumBedElevation
+        maximumSurfaceElevation = seed.worldLimits.maximumSurfaceElevation
+        runtime.load(seed)
     }
 
     private func loadScene(_ document: SceneDocument) {
@@ -233,15 +288,20 @@ final class SimulationViewModel: ObservableObject {
         cflNumber = document.manifest.solver.cflNumber
         minimumWetDepth = document.manifest.solver.minimumWetDepth
         workerCount = document.manifest.solver.workerCount
-        displayMode = .waterDepth
+        minimumBedElevation = document.manifest.resolvedWorldLimits.minimumBedElevation
+        maximumSurfaceElevation = document.manifest.resolvedWorldLimits.maximumSurfaceElevation
+        displayMode = .materialState
         palette = displayMode.preferredPalette
+        storedInitialBedElevation = document.bedElevation
+        storedInitialWaterDepth = document.initialWaterDepth
         runtime.load(SceneSeed(
             width: document.manifest.gridWidth,
             height: document.manifest.gridHeight,
             domainWidth: document.manifest.domainWidth,
             domainHeight: document.manifest.domainHeight,
             bedElevation: document.bedElevation,
-            waterDepth: document.initialWaterDepth
+            waterDepth: document.initialWaterDepth,
+            worldLimits: document.manifest.resolvedWorldLimits
         ))
         runtime.updateConfiguration(
             gravity: gravity,
@@ -366,23 +426,22 @@ final class SimulationViewModel: ObservableObject {
     }
 
     func beginBrush(at point: CGPoint) {
-        guard tool == .raise || tool == .lower else { return }
+        guard let operation = tool.operation else { return }
         pause()
         isDirty = true
         brushPreviewPoint = point
-        let direction = tool == .raise ? 1.0 : -1.0
         runtime.beginBrush(ActiveBrush(
             point: point,
             radius: brushRadius,
-            strengthPerSecond: direction * brushStrength,
+            operation: operation,
+            amountPerSecond: brushStrength,
             falloff: brushFalloff,
-            minimumBed: -100,
-            maximumBed: 100
+            target: editTarget
         ))
     }
 
     func moveBrush(to point: CGPoint) {
-        guard tool == .raise || tool == .lower else { return }
+        guard tool.operation != nil else { return }
         brushPreviewPoint = point
         runtime.moveBrush(to: point)
     }
@@ -403,10 +462,9 @@ final class SimulationViewModel: ObservableObject {
         isDirty = true
         runtime.applyPolygon(
             points: polygonPoints,
-            mode: polygonMode,
-            elevation: polygonElevation,
-            minimumBed: -100,
-            maximumBed: 100
+            operation: polygonOperation,
+            amount: polygonAmount,
+            target: editTarget
         )
         polygonPoints.removeAll(keepingCapacity: true)
     }

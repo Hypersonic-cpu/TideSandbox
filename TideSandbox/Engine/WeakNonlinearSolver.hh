@@ -63,6 +63,7 @@ public:
     [[nodiscard]] StepStatus stepOnce(double timeStep) noexcept;
     [[nodiscard]] StepStatus advance(double frameDeltaTime) noexcept;
     void resetDiagnostics() noexcept;
+    void stateWasEdited() noexcept;
     void resetPerformanceCounters() noexcept { performanceCounters_ = {}; }
 
 private:

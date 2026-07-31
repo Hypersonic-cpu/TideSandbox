@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 
 enum DisplayMode: String, CaseIterable, Identifiable, Sendable {
+    case materialState
     case bedElevation
     case waterDepth
     case surfaceElevation
@@ -13,6 +14,7 @@ enum DisplayMode: String, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
+        case .materialState: "Material state"
         case .bedElevation: "Bed"
         case .waterDepth: "Water depth"
         case .surfaceElevation: "Surface"
@@ -24,6 +26,7 @@ enum DisplayMode: String, CaseIterable, Identifiable, Sendable {
 
     var preferredPalette: ColorPalette {
         switch self {
+        case .materialState: .blueWhite
         case .bedElevation: .sand
         case .waterDepth, .surfaceElevation, .velocityMagnitude: .blueWhite
         case .surfaceDeviation: .diverging
@@ -95,6 +98,36 @@ struct RGBA: Equatable, Sendable {
 
 enum ColorMap {
     static let invalid = RGBA(red: 255, green: 0, blue: 220, alpha: 255)
+
+    static func material(
+        bedElevation: Float,
+        waterDepth: Float,
+        bedRange: ScalarRange,
+        waterReferenceDepth: Float
+    ) -> RGBA {
+        guard bedElevation.isFinite,
+              waterDepth.isFinite,
+              waterDepth >= 0,
+              waterReferenceDepth.isFinite,
+              waterReferenceDepth > 0 else { return invalid }
+        if waterDepth > 0 {
+            let relativeDepth = Swift.max(0, Swift.min(waterDepth / waterReferenceDepth, 1))
+            return interpolate(
+                from: RGBA(red: 198, green: 226, blue: 238, alpha: 255),
+                to: RGBA(red: 8, green: 68, blue: 120, alpha: 255),
+                t: relativeDepth
+            )
+        }
+        let denominator = bedRange.maximum - bedRange.minimum
+        let normalized = denominator > 0
+            ? Swift.max(0, Swift.min((bedElevation - bedRange.minimum) / denominator, 1))
+            : 0.5
+        return interpolate(
+            from: RGBA(red: 94, green: 142, blue: 76, alpha: 255),
+            to: RGBA(red: 218, green: 193, blue: 105, alpha: 255),
+            t: normalized
+        )
+    }
 
     static func map(_ value: Float, range: ScalarRange, palette: ColorPalette) -> RGBA {
         guard value.isFinite else { return invalid }

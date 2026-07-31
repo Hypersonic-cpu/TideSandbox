@@ -4,16 +4,16 @@ import Foundation
 struct ActiveBrush: Sendable {
     let point: CGPoint
     let radius: Double
-    let strengthPerSecond: Double
+    let operation: WSMaterialOperation
+    let amountPerSecond: Double
     let falloff: WSBrushFalloff
-    let minimumBed: Double
-    let maximumBed: Double
+    let target: WSEditTarget
 }
 
 nonisolated final class SimulationRuntime: @unchecked Sendable {
     private let queue = DispatchQueue(label: "WaterSandbox.EngineRuntime", qos: .userInteractive)
     private let engine: WSWaterEngineBridge
-    private var snapshotHandler: (@Sendable (SimulationSnapshot) -> Void)?
+    private var snapshotHandler: (@Sendable (SimulationSnapshot, Bool) -> Void)?
     private var timer: DispatchSourceTimer?
     private var activeBrush: ActiveBrush?
     private var lastTick = DispatchTime.now()
@@ -34,7 +34,9 @@ nonisolated final class SimulationRuntime: @unchecked Sendable {
             domainWidth: seed.domainWidth,
             domainHeight: seed.domainHeight,
             bedElevation: seed.bedData,
-            waterDepth: seed.depthData
+            waterDepth: seed.depthData,
+            minimumBed: seed.worldLimits.minimumBedElevation,
+            maximumSurface: seed.worldLimits.maximumSurfaceElevation
         )
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: 1.0 / 60.0, leeway: .milliseconds(2))
@@ -48,11 +50,13 @@ nonisolated final class SimulationRuntime: @unchecked Sendable {
         timer?.cancel()
     }
 
-    func setSnapshotHandler(_ handler: @escaping @Sendable (SimulationSnapshot) -> Void) {
+    func setSnapshotHandler(
+        _ handler: @escaping @Sendable (SimulationSnapshot, Bool) -> Void
+    ) {
         queue.async { [weak self] in
             guard let self, !isShutDown else { return }
             snapshotHandler = handler
-            publishSnapshot()
+            publishSnapshot(initialStateChanged: true)
         }
     }
 
@@ -80,10 +84,12 @@ nonisolated final class SimulationRuntime: @unchecked Sendable {
                 domainWidth: seed.domainWidth,
                 domainHeight: seed.domainHeight,
                 bedElevation: seed.bedData,
-                waterDepth: seed.depthData
+                waterDepth: seed.depthData,
+                minimumBed: seed.worldLimits.minimumBedElevation,
+                maximumSurface: seed.worldLimits.maximumSurfaceElevation
             )
             lastTick = .now()
-            publishSnapshot()
+            publishSnapshot(initialStateChanged: true)
         }
     }
 
@@ -136,6 +142,9 @@ nonisolated final class SimulationRuntime: @unchecked Sendable {
             engine.isRunning = false
             activeBrush = brush
             lastTick = .now()
+            if apply(brush: brush, amount: brush.amountPerSecond / 60) {
+                publishSnapshot(initialStateChanged: brush.target == .initialState)
+            }
         }
     }
 
@@ -145,10 +154,10 @@ nonisolated final class SimulationRuntime: @unchecked Sendable {
             activeBrush = ActiveBrush(
                 point: point,
                 radius: current.radius,
-                strengthPerSecond: current.strengthPerSecond,
+                operation: current.operation,
+                amountPerSecond: current.amountPerSecond,
                 falloff: current.falloff,
-                minimumBed: current.minimumBed,
-                maximumBed: current.maximumBed
+                target: current.target
             )
         }
     }
@@ -157,16 +166,14 @@ nonisolated final class SimulationRuntime: @unchecked Sendable {
         queue.async { [weak self] in
             guard let self else { return }
             activeBrush = nil
-            publishSnapshot()
         }
     }
 
     func applyPolygon(
         points: [CGPoint],
-        mode: WSPolygonMode,
-        elevation: Double,
-        minimumBed: Double,
-        maximumBed: Double
+        operation: WSMaterialOperation,
+        amount: Double,
+        target: WSEditTarget
     ) {
         var coordinates = [Double]()
         coordinates.reserveCapacity(points.count * 2)
@@ -178,14 +185,15 @@ nonisolated final class SimulationRuntime: @unchecked Sendable {
         queue.async { [weak self] in
             guard let self, !isShutDown else { return }
             engine.isRunning = false
-            _ = engine.applyPolygon(
+            let result = engine.applyMaterialPolygon(
                 xyCoordinates: data,
-                mode: mode,
-                elevation: elevation,
-                minimumBed: minimumBed,
-                maximumBed: maximumBed
+                operation: operation,
+                amount: amount,
+                target: target
             )
-            publishSnapshot()
+            if result.isChanged {
+                publishSnapshot(initialStateChanged: target == .initialState)
+            }
         }
     }
 
@@ -213,25 +221,31 @@ nonisolated final class SimulationRuntime: @unchecked Sendable {
             changed = true
         }
         if let brush = activeBrush {
-            _ = engine.applyBrush(
-                x: Double(brush.point.x),
-                y: Double(brush.point.y),
-                radius: brush.radius,
-                strength: brush.strengthPerSecond * elapsed,
-                falloff: brush.falloff,
-                minimumBed: brush.minimumBed,
-                maximumBed: brush.maximumBed
-            )
-            changed = true
+            let brushChanged = apply(brush: brush, amount: brush.amountPerSecond * elapsed)
+            if brushChanged {
+                publishSnapshot(initialStateChanged: brush.target == .initialState)
+            }
         }
         tickCount &+= 1
-        if changed, tickCount.isMultiple(of: 2) {
+        if changed, activeBrush == nil, tickCount.isMultiple(of: 2) {
             publishSnapshot()
         }
     }
 
-    private func publishSnapshot() {
+    private func apply(brush: ActiveBrush, amount: Double) -> Bool {
+        engine.applyMaterialBrush(
+            x: Double(brush.point.x),
+            y: Double(brush.point.y),
+            radius: brush.radius,
+            operation: brush.operation,
+            amount: amount,
+            falloff: brush.falloff,
+            target: brush.target
+        ).isChanged
+    }
+
+    private func publishSnapshot(initialStateChanged: Bool = false) {
         let snapshot = SimulationSnapshot(engine.snapshot())
-        snapshotHandler?(snapshot)
+        snapshotHandler?(snapshot, initialStateChanged)
     }
 }

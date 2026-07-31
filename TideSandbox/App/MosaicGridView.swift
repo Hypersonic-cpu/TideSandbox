@@ -63,7 +63,7 @@ struct MosaicGridView: View {
             }
 
             if let brushPoint = model.brushPreviewPoint,
-               model.tool == .raise || model.tool == .lower {
+               model.tool.operation != nil {
                 let center = mapping.viewPoint(
                     forPhysicalPoint: brushPoint,
                     domainWidth: model.snapshot.domainWidth,
@@ -114,7 +114,7 @@ struct MosaicGridView: View {
                         domainWidth: model.snapshot.domainWidth,
                         domainHeight: model.snapshot.domainHeight
                       ) else { return }
-                if model.tool == .raise || model.tool == .lower {
+                if model.tool.operation != nil {
                     if brushIsActive {
                         model.moveBrush(to: point)
                     } else {
@@ -148,7 +148,17 @@ enum MosaicRaster {
         policy: DisplayResolutionPolicy = .identicalCells,
         targetPixelSize: CGSize? = nil
     ) -> CGImage? {
-        ScalarRasterizer.image(
+        if mode == .materialState {
+            return MaterialRasterizer.image(
+                bedElevation: snapshot.bedElevation,
+                waterDepth: snapshot.waterDepth,
+                width: snapshot.width,
+                height: snapshot.height,
+                policy: policy,
+                targetPixelSize: targetPixelSize
+            )
+        }
+        return ScalarRasterizer.image(
             engineValues: snapshot.values(for: mode),
             width: snapshot.width,
             height: snapshot.height,

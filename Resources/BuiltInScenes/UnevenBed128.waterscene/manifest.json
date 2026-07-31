@@ -26,6 +26,10 @@
   "storedByteOrder" : "little-endian",
   "storedRowOrder" : "row-major-bottom-to-top",
   "storedScalarType" : "float32",
+  "worldLimits" : {
+    "maximumSurfaceElevation" : 1000,
+    "minimumBedElevation" : -1000
+  },
   "tags" : [
     "built-in",
     "uneven",

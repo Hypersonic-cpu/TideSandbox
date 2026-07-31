@@ -36,6 +36,21 @@ nonisolated struct SceneSolverParameters: Codable, Equatable, Sendable {
     }
 }
 
+nonisolated struct SceneWorldLimits: Codable, Equatable, Sendable {
+    let minimumBedElevation: Double
+    let maximumSurfaceElevation: Double
+
+    static let defaults = SceneWorldLimits(
+        minimumBedElevation: -1_000,
+        maximumSurfaceElevation: 1_000
+    )
+
+    var isValid: Bool {
+        minimumBedElevation.isFinite && maximumSurfaceElevation.isFinite &&
+            minimumBedElevation <= maximumSurfaceElevation
+    }
+}
+
 nonisolated struct SceneResourceNames: Codable, Equatable, Sendable {
     let bedElevation: String
     let initialWaterDepth: String
@@ -71,6 +86,7 @@ nonisolated struct SceneManifest: Codable, Equatable, Identifiable, Sendable {
     let domainHeight: Double
     let initializationMode: SceneInitializationMode
     let solver: SceneSolverParameters
+    let worldLimits: SceneWorldLimits?
     let resources: SceneResourceNames
     let source: SceneSourceType
     let description: String?
@@ -91,6 +107,7 @@ nonisolated struct SceneManifest: Codable, Equatable, Identifiable, Sendable {
         domainHeight: Double,
         initializationMode: SceneInitializationMode = .explicitDepth,
         solver: SceneSolverParameters = .defaults,
+        worldLimits: SceneWorldLimits = .defaults,
         resources: SceneResourceNames = .standard,
         source: SceneSourceType,
         description: String? = nil,
@@ -110,6 +127,7 @@ nonisolated struct SceneManifest: Codable, Equatable, Identifiable, Sendable {
         self.domainHeight = domainHeight
         self.initializationMode = initializationMode
         self.solver = solver
+        self.worldLimits = worldLimits
         self.resources = resources
         self.source = source
         self.description = description
@@ -124,6 +142,8 @@ nonisolated struct SceneManifest: Codable, Equatable, Identifiable, Sendable {
               gridWidth <= Int.max / gridHeight else { return nil }
         return gridWidth * gridHeight
     }
+
+    var resolvedWorldLimits: SceneWorldLimits { worldLimits ?? .defaults }
 }
 
 nonisolated struct SceneDocument: Sendable {
@@ -169,6 +189,7 @@ nonisolated enum ScenePackageError: Error, Equatable, LocalizedError, Sendable {
     case fieldByteCount(resource: String, expected: Int, actual: Int)
     case nonFiniteField(resource: String, index: Int)
     case negativeWaterDepth(index: Int)
+    case fieldOutsideWorldLimits(index: Int)
     case invalidPreview
     case catalogCorrupt(String)
     case sceneNotFound(UUID)
@@ -202,6 +223,8 @@ nonisolated enum ScenePackageError: Error, Equatable, LocalizedError, Sendable {
             "The field ‘\(resource)’ contains a non-finite value at cell \(index)."
         case let .negativeWaterDepth(index):
             "Initial water depth is negative at cell \(index)."
+        case let .fieldOutsideWorldLimits(index):
+            "The bed or water surface at cell \(index) is outside the scene world limits."
         case .invalidPreview:
             "The scene preview is not valid PNG data."
         case let .catalogCorrupt(reason):
@@ -432,6 +455,9 @@ nonisolated enum ScenePackageCodec {
             throw ScenePackageError.invalidPhysicalDimensions
         }
         guard manifest.solver.isValid else { throw ScenePackageError.invalidSolverParameters }
+        guard manifest.resolvedWorldLimits.isValid else {
+            throw ScenePackageError.invalidManifest("world limits are invalid")
+        }
         guard manifest.storedByteOrder == SceneManifest.byteOrder,
               manifest.storedScalarType == SceneManifest.scalarType,
               manifest.storedRowOrder == SceneManifest.rowOrder else {
@@ -508,6 +534,13 @@ nonisolated enum ScenePackageCodec {
                 )
             }
             guard value >= 0 else { throw ScenePackageError.negativeWaterDepth(index: index) }
+            let bed = Double(bedElevation[index])
+            let depth = Double(value)
+            let limits = manifest.resolvedWorldLimits
+            guard bed >= limits.minimumBedElevation,
+                  bed + depth <= limits.maximumSurfaceElevation else {
+                throw ScenePackageError.fieldOutsideWorldLimits(index: index)
+            }
         }
     }
 

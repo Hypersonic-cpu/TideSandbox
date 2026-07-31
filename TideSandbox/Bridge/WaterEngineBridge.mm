@@ -21,6 +21,7 @@ struct BridgeImplementation final {
     SimulationState state;
     SolverConfiguration configuration;
     std::unique_ptr<WeakNonlinearSolver> solver;
+    std::unique_ptr<TerrainEditor> editor;
     std::vector<double> referenceSurface;
     bool running = false;
 };
@@ -48,8 +49,18 @@ struct BridgeImplementation final {
     }
 }
 
-[[nodiscard]] PolygonMode enginePolygonMode(const WSPolygonMode mode) noexcept {
-    return mode == WSPolygonModeSet ? PolygonMode::set : PolygonMode::add;
+[[nodiscard]] EditTarget engineTarget(const WSEditTarget target) noexcept {
+    return target == WSEditTargetPausedCurrentState
+        ? EditTarget::pausedCurrentState : EditTarget::initialState;
+}
+
+[[nodiscard]] MaterialOperation engineOperation(const WSMaterialOperation operation) noexcept {
+    switch (operation) {
+    case WSMaterialOperationAddSand: return MaterialOperation::addSand;
+    case WSMaterialOperationRemoveSand: return MaterialOperation::removeSand;
+    case WSMaterialOperationAddWater: return MaterialOperation::addWater;
+    case WSMaterialOperationRemoveWater: return MaterialOperation::removeWater;
+    }
 }
 
 struct FreeDeleter final {
@@ -91,6 +102,41 @@ private:
     std::vector<double> result(count);
     std::transform(values.begin(), values.end(), result.begin(),
                    [](const float value) { return static_cast<double>(value); });
+    return result;
+}
+
+} // namespace
+
+@interface WSTerrainEditResult ()
+
+@property(nonatomic, readwrite) BOOL succeeded;
+@property(nonatomic, readwrite, getter=isChanged) BOOL changed;
+@property(nonatomic, readwrite) NSUInteger changedCells;
+@property(nonatomic, readwrite) NSUInteger changedFaces;
+@property(nonatomic, readwrite) double sandVolumeDelta;
+@property(nonatomic, readwrite) double waterVolumeDelta;
+@property(nonatomic, readwrite, getter=isClamped) BOOL clamped;
+@property(nonatomic, readwrite) NSUInteger newlyWetCells;
+@property(nonatomic, readwrite) NSUInteger newlyDryCells;
+
+@end
+
+@implementation WSTerrainEditResult
+@end
+
+namespace {
+
+[[nodiscard]] WSTerrainEditResult *bridgeEditResult(const TerrainEditResult& source) {
+    WSTerrainEditResult *result = [[WSTerrainEditResult alloc] init];
+    result.succeeded = source.status == TerrainEditStatus::success;
+    result.changed = source.changed();
+    result.changedCells = source.changedCells;
+    result.changedFaces = source.changedFaces;
+    result.sandVolumeDelta = source.sandVolumeDelta;
+    result.waterVolumeDelta = source.waterVolumeDelta;
+    result.clamped = source.clamped;
+    result.newlyWetCells = source.newlyWetCells;
+    result.newlyDryCells = source.newlyDryCells;
     return result;
 }
 
@@ -179,6 +225,19 @@ private:
       domainHeight:(double)domainHeight
       bedElevation:(NSData *)bedElevation
          waterDepth:(NSData *)waterDepth {
+    return [self loadWidth:width height:height domainWidth:domainWidth domainHeight:domainHeight
+              bedElevation:bedElevation waterDepth:waterDepth minimumBed:-1'000.0
+            maximumSurface:1'000.0];
+}
+
+- (BOOL)loadWidth:(NSUInteger)width
+            height:(NSUInteger)height
+       domainWidth:(double)domainWidth
+      domainHeight:(double)domainHeight
+      bedElevation:(NSData *)bedElevation
+         waterDepth:(NSData *)waterDepth
+         minimumBed:(double)minimumBed
+     maximumSurface:(double)maximumSurface {
     if (width < 8 || height < 8 || width > std::numeric_limits<std::size_t>::max() / height) {
         return NO;
     }
@@ -192,10 +251,12 @@ private:
     auto& impl = implementation(_implementation);
     const GridGeometry geometry{static_cast<std::size_t>(width), static_cast<std::size_t>(height),
                                 domainWidth, domainHeight};
-    if (!impl.state.initializeDepth(geometry, bed, depth)) {
+    if (!impl.state.initializeDepth(geometry, bed, depth, {minimumBed, maximumSurface})) {
         return NO;
     }
     impl.solver = std::make_unique<WeakNonlinearSolver>(impl.state, impl.configuration);
+    impl.editor = std::make_unique<TerrainEditor>(impl.state,
+                                                  impl.configuration.minimumWetDepth);
     impl.referenceSurface.resize(count);
     for (std::size_t index = 0; index < count; ++index) {
         impl.referenceSurface[index] = bed[index] + depth[index];
@@ -207,6 +268,7 @@ private:
 - (void)reset {
     auto& impl = implementation(_implementation);
     impl.state.reset();
+    impl.solver->stateWasEdited();
     impl.running = false;
 }
 
@@ -311,34 +373,41 @@ private:
     impl.configuration = configuration;
     if (priorWorkerCount != resolvedWorkerCount) {
         impl.solver = std::make_unique<WeakNonlinearSolver>(impl.state, configuration);
+        impl.editor = std::make_unique<TerrainEditor>(impl.state,
+                                                      configuration.minimumWetDepth);
         return YES;
     }
-    return impl.solver->setConfiguration(configuration);
-}
-
-- (BOOL)applyBrushAtX:(double)x
-                    y:(double)y
-               radius:(double)radius
-             strength:(double)strength
-              falloff:(WSBrushFalloff)falloff
-           minimumBed:(double)minimumBed
-           maximumBed:(double)maximumBed {
-    auto& impl = implementation(_implementation);
-    TerrainEditor editor(impl.state);
-    const BrushCommand command{{x, y}, radius, strength, engineFalloff(falloff),
-                               minimumBed, maximumBed};
-    return editor.applyBrush(command) == TerrainEditStatus::success;
-}
-
-- (BOOL)applyPolygonWithXYCoordinates:(NSData *)xyCoordinates
-                                  mode:(WSPolygonMode)mode
-                             elevation:(double)elevation
-                            minimumBed:(double)minimumBed
-                            maximumBed:(double)maximumBed {
-    if (xyCoordinates.length % (2 * sizeof(double)) != 0) {
-        return NO;
+    const BOOL updated = impl.solver->setConfiguration(configuration);
+    if (updated) {
+        impl.editor = std::make_unique<TerrainEditor>(impl.state,
+                                                      configuration.minimumWetDepth);
     }
-    const auto coordinateCount = xyCoordinates.length / sizeof(double);
+    return updated;
+}
+
+- (WSTerrainEditResult *)applyMaterialBrushAtX:(double)x
+                                             y:(double)y
+                                        radius:(double)radius
+                                     operation:(WSMaterialOperation)operation
+                                        amount:(double)amount
+                                       falloff:(WSBrushFalloff)falloff
+                                        target:(WSEditTarget)target {
+    auto& impl = implementation(_implementation);
+    const BrushCommand command{{{x, y}, radius, engineFalloff(falloff)},
+                               {engineOperation(operation), amount, engineTarget(target)}};
+    const TerrainEditResult result = impl.editor->applyBrush(command);
+    impl.solver->stateWasEdited();
+    return bridgeEditResult(result);
+}
+
+- (WSTerrainEditResult *)applyMaterialPolygonWithXYCoordinates:(NSData *)xyCoordinates
+                                                      operation:(WSMaterialOperation)operation
+                                                         amount:(double)amount
+                                                         target:(WSEditTarget)target {
+    if (xyCoordinates.length % (2 * sizeof(double)) != 0) {
+        return bridgeEditResult({.status = TerrainEditStatus::invalidCommand});
+    }
+    const std::size_t coordinateCount = xyCoordinates.length / sizeof(double);
     const auto coordinates = std::span(static_cast<const double *>(xyCoordinates.bytes),
                                        coordinateCount);
     std::vector<Point2D> points(coordinateCount / 2);
@@ -346,10 +415,11 @@ private:
         points[index] = {coordinates[index * 2], coordinates[index * 2 + 1]};
     }
     auto& impl = implementation(_implementation);
-    TerrainEditor editor(impl.state);
-    const PolygonCommand command{points, enginePolygonMode(mode), elevation,
-                                 minimumBed, maximumBed};
-    return editor.applyPolygon(command) == TerrainEditStatus::success;
+    const PolygonCommand command{points,
+                                 {engineOperation(operation), amount, engineTarget(target)}};
+    const TerrainEditResult result = impl.editor->applyPolygon(command);
+    impl.solver->stateWasEdited();
+    return bridgeEditResult(result);
 }
 
 @end

@@ -19,10 +19,31 @@ typedef NS_ENUM(NSInteger, WSBrushFalloff) {
     WSBrushFalloffSmooth,
 };
 
-typedef NS_ENUM(NSInteger, WSPolygonMode) {
-    WSPolygonModeAdd = 0,
-    WSPolygonModeSet,
+typedef NS_ENUM(NSInteger, WSEditTarget) {
+    WSEditTargetInitialState = 0,
+    WSEditTargetPausedCurrentState,
 };
+
+typedef NS_ENUM(NSInteger, WSMaterialOperation) {
+    WSMaterialOperationAddSand = 0,
+    WSMaterialOperationRemoveSand,
+    WSMaterialOperationAddWater,
+    WSMaterialOperationRemoveWater,
+};
+
+@interface WSTerrainEditResult : NSObject
+
+@property(nonatomic, readonly) BOOL succeeded;
+@property(nonatomic, readonly, getter=isChanged) BOOL changed;
+@property(nonatomic, readonly) NSUInteger changedCells;
+@property(nonatomic, readonly) NSUInteger changedFaces;
+@property(nonatomic, readonly) double sandVolumeDelta;
+@property(nonatomic, readonly) double waterVolumeDelta;
+@property(nonatomic, readonly, getter=isClamped) BOOL clamped;
+@property(nonatomic, readonly) NSUInteger newlyWetCells;
+@property(nonatomic, readonly) NSUInteger newlyDryCells;
+
+@end
 
 @interface WSEngineDiagnostics : NSObject
 
@@ -79,6 +100,15 @@ typedef NS_ENUM(NSInteger, WSPolygonMode) {
       bedElevation:(NSData *)bedElevation
          waterDepth:(NSData *)waterDepth
     NS_SWIFT_NAME(load(width:height:domainWidth:domainHeight:bedElevation:waterDepth:));
+- (BOOL)loadWidth:(NSUInteger)width
+            height:(NSUInteger)height
+       domainWidth:(double)domainWidth
+      domainHeight:(double)domainHeight
+      bedElevation:(NSData *)bedElevation
+         waterDepth:(NSData *)waterDepth
+         minimumBed:(double)minimumBed
+     maximumSurface:(double)maximumSurface
+    NS_SWIFT_NAME(load(width:height:domainWidth:domainHeight:bedElevation:waterDepth:minimumBed:maximumSurface:));
 - (void)reset;
 - (WSEngineStepStatus)advance:(double)frameDeltaTime;
 - (WSEngineStepStatus)stepOnce:(double)timeStep;
@@ -91,21 +121,20 @@ typedef NS_ENUM(NSInteger, WSPolygonMode) {
            workerCount:(NSUInteger)workerCount
     NS_SWIFT_NAME(updateConfiguration(gravity:linearDamping:cflNumber:minimumWetDepth:workerCount:));
 
-- (BOOL)applyBrushAtX:(double)x
-                    y:(double)y
-               radius:(double)radius
-             strength:(double)strength
-              falloff:(WSBrushFalloff)falloff
-           minimumBed:(double)minimumBed
-           maximumBed:(double)maximumBed
-    NS_SWIFT_NAME(applyBrush(x:y:radius:strength:falloff:minimumBed:maximumBed:));
+- (WSTerrainEditResult *)applyMaterialBrushAtX:(double)x
+                                             y:(double)y
+                                        radius:(double)radius
+                                     operation:(WSMaterialOperation)operation
+                                        amount:(double)amount
+                                       falloff:(WSBrushFalloff)falloff
+                                        target:(WSEditTarget)target
+    NS_SWIFT_NAME(applyMaterialBrush(x:y:radius:operation:amount:falloff:target:));
 
-- (BOOL)applyPolygonWithXYCoordinates:(NSData *)xyCoordinates
-                                  mode:(WSPolygonMode)mode
-                            elevation:(double)elevation
-                           minimumBed:(double)minimumBed
-                            maximumBed:(double)maximumBed
-    NS_SWIFT_NAME(applyPolygon(xyCoordinates:mode:elevation:minimumBed:maximumBed:));
+- (WSTerrainEditResult *)applyMaterialPolygonWithXYCoordinates:(NSData *)xyCoordinates
+                                                      operation:(WSMaterialOperation)operation
+                                                         amount:(double)amount
+                                                         target:(WSEditTarget)target
+    NS_SWIFT_NAME(applyMaterialPolygon(xyCoordinates:operation:amount:target:));
 
 @end
 

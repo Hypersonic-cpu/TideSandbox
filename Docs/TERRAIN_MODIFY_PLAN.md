@@ -253,7 +253,7 @@ Implementation order:
 
 # Phase 1 — Edit state model and Engine API
 
-- [ ] **1.1 Define edit target, material operation, world limits, and result accounting.**
+- [x] **1.1 Define edit target, material operation, world limits, and result accounting.**
 
 Use plain enums/value structs:
 
@@ -282,7 +282,7 @@ Return a compact result:
 
 Avoid a polymorphic command hierarchy.
 
-- [ ] **1.2 Separate initial-state and paused-current-state mutation.**
+- [x] **1.2 Separate initial-state and paused-current-state mutation.**
 
 Requirements:
 
@@ -293,7 +293,7 @@ Requirements:
 - saving must explicitly choose initial or current paused state;
 - default Save must not silently replace initial data with a transient evolved state.
 
-- [ ] **1.3 Implement finite, clamped, atomic edit execution.**
+- [x] **1.3 Implement finite, clamped, atomic edit execution.**
 
 Requirements:
 
@@ -315,7 +315,7 @@ Requirements:
 
 # Phase 2 — Basic initial-state editing
 
-- [ ] **2.1 Implement immediate brush/polygon feedback while the solver is stopped, with one shared edit path for 2D and 3D.**
+- [x] **2.1 Implement immediate brush/polygon feedback while the solver is stopped, with one shared edit path for 2D and 3D.**
 
 Requirements:
 
@@ -330,7 +330,7 @@ Requirements:
 - time and diagnostics do not advance;
 - initial Play starts with zero velocities.
 
-- [ ] **2.2 Implement the three mandatory base tests.**
+- [x] **2.2 Implement the three mandatory base tests.**
 
 ### Test 1: submerged sand under static water
 
@@ -384,7 +384,7 @@ Assertions:
 - newly wetted terrain immediately becomes pale blue;
 - polygon Apply behaves identically.
 
-- [ ] **2.3 Run impact-sized basic edit coverage.**
+- [x] **2.3 Run impact-sized basic edit coverage.**
 
 During implementation:
 
@@ -405,7 +405,7 @@ The final numerical checkpoint still covers all four required sizes.
 
 # Phase 3 — Paused-current-state editing
 
-- [ ] **3.1 Implement dynamic-state editing with face momentum mixing, independent of whether the active viewport is 2D or 3D.**
+- [x] **3.1 Implement dynamic-state editing with face momentum mixing, independent of whether the active viewport is 2D or 3D.**
 
 Requirements:
 
@@ -417,7 +417,7 @@ Requirements:
 - preserve unaffected face values exactly;
 - retain simulation time.
 
-- [ ] **3.2 Add operation-specific momentum tests.**
+- [x] **3.2 Add operation-specific momentum tests.**
 
 Add water:
 
@@ -433,7 +433,7 @@ Remove water: verify surviving velocity unchanged; dry faces become zero; no neg
 
 Add sand: verify deleted water, unchanged surviving velocity, closed-face zeroing, and constant `eta` while submerged.
 
-- [ ] **3.3 Add resume-after-edit stability tests.**
+- [x] **3.3 Add resume-after-edit stability tests.**
 
 For each operation:
 
@@ -455,7 +455,7 @@ Assert finite fields, no negative depth, fresh CFL, exact edit-volume accounting
 
 # Phase 4 — Movable shoreline
 
-- [ ] **4.1 Replace the dry-neighbor heuristic with hydrostatic face reconstruction.**
+- [x] **4.1 Replace the dry-neighbor heuristic with hydrostatic face reconstruction.**
 
 For each internal face:
 
@@ -484,7 +484,7 @@ Rules:
 - low dry ground below neighboring surface can be inundated;
 - constant-`eta` lake at rest remains stationary.
 
-- [ ] **4.2 Use connected upwind depth for flux and retain donor limiting.**
+- [x] **4.2 Use connected upwind depth for flux and retain donor limiting.**
 
 ```text
 connectedDonorDepth = velocity>=0 ? dL : dR
@@ -499,7 +499,7 @@ Requirements:
 - `h<=minimumWetDepth` is dry for activation/cleanup;
 - large/frequent post-clamp correction fails tests.
 
-- [ ] **4.3 Sanitize edited shoreline state before resume.**
+- [x] **4.3 Sanitize edited shoreline state before resume.**
 
 After editing:
 
@@ -510,7 +510,7 @@ After editing:
 - next solver call recomputes `eta`, CFL, fluxes, and limiter;
 - do not run a hidden solver step.
 
-- [ ] **4.4 Add shoreline tests.**
+- [x] **4.4 Add shoreline tests.**
 
 Required:
 

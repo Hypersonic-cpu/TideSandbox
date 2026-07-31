@@ -292,6 +292,74 @@ final class PersistenceTests: XCTestCase {
         }
     }
 
+    func testWorldLimitsRoundTripLegacyDefaultAndRejectOutOfBoundsFields() throws {
+        let packageURL = temporaryDirectory().appendingPathComponent("limits.waterscene")
+        let customLimits = SceneWorldLimits(
+            minimumBedElevation: -2,
+            maximumSurfaceElevation: 5
+        )
+        let timestamp = Date(timeIntervalSince1970: 1_700_000_000)
+        let manifest = SceneManifest(
+            id: UUID(),
+            name: "World limits",
+            createdAt: timestamp,
+            modifiedAt: timestamp,
+            gridWidth: 8,
+            gridHeight: 8,
+            domainWidth: 8,
+            domainHeight: 8,
+            worldLimits: customLimits,
+            resources: SceneResourceNames(
+                bedElevation: "bed_elevation.bin",
+                initialWaterDepth: "initial_water_depth.bin",
+                preview: nil,
+                notes: nil
+            ),
+            source: .user
+        )
+        let document = SceneDocument(
+            manifest: manifest,
+            bedElevation: [Float](repeating: -1, count: 64),
+            initialWaterDepth: [Float](repeating: 4, count: 64)
+        )
+        try ScenePackageCodec.writeAtomically(document, to: packageURL)
+        XCTAssertEqual(try ScenePackageCodec.read(from: packageURL).manifest.resolvedWorldLimits,
+                       customLimits)
+
+        let manifestURL = packageURL.appendingPathComponent("manifest.json")
+        var json = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: manifestURL)) as? [String: Any]
+        )
+        json.removeValue(forKey: "worldLimits")
+        try JSONSerialization.data(withJSONObject: json).write(to: manifestURL)
+        XCTAssertEqual(try ScenePackageCodec.read(from: packageURL).manifest.resolvedWorldLimits,
+                       .defaults)
+
+        let invalidManifest = SceneManifest(
+            id: UUID(),
+            name: "Invalid limits",
+            createdAt: timestamp,
+            modifiedAt: timestamp,
+            gridWidth: 8,
+            gridHeight: 8,
+            domainWidth: 8,
+            domainHeight: 8,
+            worldLimits: SceneWorldLimits(
+                minimumBedElevation: -1,
+                maximumSurfaceElevation: 1
+            ),
+            source: .user
+        )
+        let invalidDocument = SceneDocument(
+            manifest: invalidManifest,
+            bedElevation: [Float](repeating: 0, count: 64),
+            initialWaterDepth: [Float](repeating: 2, count: 64)
+        )
+        XCTAssertThrowsError(try ScenePackageCodec.validate(document: invalidDocument)) { error in
+            XCTAssertEqual(error as? ScenePackageError, .fieldOutsideWorldLimits(index: 0))
+        }
+    }
+
     private func makeDocument(
         id: UUID,
         name: String,
@@ -354,6 +422,7 @@ final class PersistenceTests: XCTestCase {
             domainHeight: source.domainHeight,
             initializationMode: source.initializationMode,
             solver: source.solver,
+            worldLimits: source.resolvedWorldLimits,
             resources: source.resources,
             source: source.source,
             description: source.description,
