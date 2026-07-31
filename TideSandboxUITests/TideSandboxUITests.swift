@@ -27,7 +27,7 @@ final class TideSandboxUITests: XCTestCase {
 
         let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
         screenshot.name = "Water Sandbox Main Window"
-        screenshot.lifetime = .keepAlways
+        screenshot.lifetime = .deleteOnSuccess
         add(screenshot)
     }
 
@@ -69,7 +69,7 @@ final class TideSandboxUITests: XCTestCase {
 
         let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
         screenshot.name = "Water Sandbox 512 Grid"
-        screenshot.lifetime = .keepAlways
+        screenshot.lifetime = .deleteOnSuccess
         add(screenshot)
     }
 
@@ -97,7 +97,7 @@ final class TideSandboxUITests: XCTestCase {
         app.menuItems["Bilinear scalar"].click()
         let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
         screenshot.name = "Water Sandbox Bilinear Display Policy"
-        screenshot.lifetime = .keepAlways
+        screenshot.lifetime = .deleteOnSuccess
         add(screenshot)
     }
 
@@ -146,7 +146,7 @@ final class TideSandboxUITests: XCTestCase {
 
         let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
         screenshot.name = "3D Metal Terrain"
-        screenshot.lifetime = .keepAlways
+        screenshot.lifetime = .deleteOnSuccess
         add(screenshot)
     }
 
@@ -184,6 +184,127 @@ final class TideSandboxUITests: XCTestCase {
             screenshot.lifetime = .keepAlways
             add(screenshot)
         }
+    }
+
+    @MainActor
+    func testMovingWaterUpdatesIn3DWithYawAndPitchControls() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        let mosaic = app.descendants(matching: .any)["mosaic-grid"]
+        let toolPicker = app.descendants(matching: .any)["terrain-tool-picker"]
+        XCTAssertTrue(mosaic.waitForExistence(timeout: 8))
+        XCTAssertTrue(toolPicker.exists)
+        let raiseTool = toolPicker.radioButtons.matching(
+            NSPredicate(format: "label == %@", "Raise")
+        ).firstMatch
+        XCTAssertTrue(raiseTool.exists)
+        raiseTool.click()
+        mosaic.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.8)
+
+        let volume = app.descendants(matching: .any)["volume-diagnostic"]
+        let time = app.descendants(matching: .any)["time-diagnostic"]
+        XCTAssertTrue(volume.waitForExistence(timeout: 3))
+        XCTAssertTrue(time.exists)
+        let initialVolume = try XCTUnwrap(diagnosticText(volume))
+        let initialTime = try XCTUnwrap(diagnosticNumber(time))
+
+        let modePicker = app.descendants(matching: .any)["viewport-mode-picker"]
+        modePicker.radioButtons.matching(
+            NSPredicate(format: "label == %@", "3D")
+        ).firstMatch.click()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["height-field-3d"]
+                .waitForExistence(timeout: 3)
+        )
+        XCTAssertFalse(toolPicker.isEnabled)
+
+        let yaw = app.sliders["camera-yaw-slider"]
+        let pitch = app.sliders["camera-pitch-slider"]
+        let verticalScale = app.sliders["vertical-exaggeration-slider"]
+        let opacity = app.sliders["water-opacity-slider"]
+        XCTAssertTrue(yaw.waitForExistence(timeout: 3))
+        XCTAssertTrue(pitch.exists)
+        XCTAssertTrue(verticalScale.exists)
+        XCTAssertTrue(opacity.exists)
+        yaw.adjust(toNormalizedSliderPosition: 0.62)
+        pitch.adjust(toNormalizedSliderPosition: 0.58)
+        XCTAssertTrue(waitForValue("Custom", identifier: "camera-preset-picker", in: app))
+
+        app.buttons["step-button"].click()
+        XCTAssertTrue(waitForDiagnostic(time, greaterThan: initialTime, timeout: 5))
+        let steppedTime = try XCTUnwrap(diagnosticNumber(time))
+        let playPause = app.buttons["play-pause-button"]
+        playPause.click()
+        XCTAssertTrue(waitForDiagnostic(time, atLeast: steppedTime + 0.6, timeout: 8))
+        playPause.click()
+        XCTAssertEqual(try XCTUnwrap(diagnosticText(volume)), initialVolume)
+
+        let isometricScreenshot = XCTAttachment(
+            screenshot: app.windows.firstMatch.screenshot()
+        )
+        isometricScreenshot.name = "Moving Center Wave — Custom Yaw and Pitch"
+        isometricScreenshot.lifetime = .keepAlways
+        add(isometricScreenshot)
+
+        let cameraPicker = app.popUpButtons["camera-preset-picker"]
+        cameraPicker.click()
+        cameraPicker.menuItems["Low oblique"].click()
+        let lowObliqueScreenshot = XCTAttachment(
+            screenshot: app.windows.firstMatch.screenshot()
+        )
+        lowObliqueScreenshot.name = "Moving Center Wave — Low oblique"
+        lowObliqueScreenshot.lifetime = .keepAlways
+        add(lowObliqueScreenshot)
+    }
+
+    @MainActor
+    func test3DAllPresetSizesResetAndDryCoastRemainValid() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        let modePicker = app.descendants(matching: .any)["viewport-mode-picker"]
+        XCTAssertTrue(modePicker.waitForExistence(timeout: 8))
+        modePicker.radioButtons.matching(
+            NSPredicate(format: "label == %@", "3D")
+        ).firstMatch.click()
+        let heightField = app.descendants(matching: .any)["height-field-3d"]
+        XCTAssertTrue(heightField.waitForExistence(timeout: 3))
+
+        let presetPicker = app.popUpButtons["preset-picker"]
+        let loadPreset = app.buttons["load-preset-button"]
+        for (title, dimensions) in [
+            ("16 × 16 Flat", "16 × 16"),
+            ("32 × 32 Center Bump", "32 × 32"),
+            ("128 × 128 Uneven Bed", "128 × 128"),
+            ("512 × 512 Coast Channel", "512 × 512"),
+        ] {
+            presetPicker.click()
+            presetPicker.menuItems[title].click()
+            loadPreset.click()
+            XCTAssertTrue(waitForValue(dimensions, identifier: "grid-diagnostic", in: app))
+            XCTAssertTrue(heightField.exists)
+        }
+
+        app.buttons["reset-button"].click()
+        XCTAssertTrue(waitForValue("0.000", identifier: "time-diagnostic", in: app))
+        let wetCells = app.descendants(matching: .any)["wet-cells-diagnostic"]
+        let wetCellCount = try XCTUnwrap(diagnosticNumber(wetCells))
+        XCTAssertGreaterThan(wetCellCount, 0)
+        XCTAssertLessThan(wetCellCount, Double(512 * 512))
+        let depth = app.descendants(matching: .any)["depth-diagnostic"]
+        let depthText = try XCTUnwrap(diagnosticText(depth)).lowercased()
+        XCTAssertFalse(depthText.contains("nan"))
+        XCTAssertFalse(depthText.contains("inf"))
+
+        let cameraPicker = app.popUpButtons["camera-preset-picker"]
+        cameraPicker.click()
+        cameraPicker.menuItems["Opposite oblique"].click()
+        let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        screenshot.name = "512 Coast — Dry Shoreline and Channel"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 
     @MainActor
@@ -226,7 +347,7 @@ final class TideSandboxUITests: XCTestCase {
 
         let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
         screenshot.name = "Water Sandbox Persistent Gallery"
-        screenshot.lifetime = .keepAlways
+        screenshot.lifetime = .deleteOnSuccess
         add(screenshot)
     }
 
@@ -266,5 +387,53 @@ final class TideSandboxUITests: XCTestCase {
         let predicate = NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", value, value)
         let expectation = XCTNSPredicateExpectation(predicate: predicate, object: element)
         return XCTWaiter().wait(for: [expectation], timeout: 8) == .completed
+    }
+
+    private func waitForDiagnostic(
+        _ element: XCUIElement,
+        greaterThan minimum: Double,
+        timeout: TimeInterval
+    ) -> Bool {
+        let predicate = NSPredicate { object, _ in
+            guard let element = object as? XCUIElement,
+                  let value = self.diagnosticNumber(element) else {
+                return false
+            }
+            return value > minimum
+        }
+        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: element)
+        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    private func waitForDiagnostic(
+        _ element: XCUIElement,
+        atLeast minimum: Double,
+        timeout: TimeInterval
+    ) -> Bool {
+        let predicate = NSPredicate { object, _ in
+            guard let element = object as? XCUIElement,
+                  let value = self.diagnosticNumber(element) else {
+                return false
+            }
+            return value >= minimum
+        }
+        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: element)
+        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    private func diagnosticNumber(_ element: XCUIElement) -> Double? {
+        guard let text = diagnosticText(element) else { return nil }
+        return text.split { character in
+            !character.isNumber && character != "." && character != "-" && character != "+"
+        }
+        .compactMap { Double($0) }
+        .first
+    }
+
+    private func diagnosticText(_ element: XCUIElement) -> String? {
+        if let value = element.value as? String, !value.isEmpty {
+            return value
+        }
+        return element.label.isEmpty ? nil : element.label
     }
 }

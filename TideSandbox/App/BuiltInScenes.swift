@@ -45,7 +45,7 @@ enum SimulationPreset: String, CaseIterable, Identifiable, Sendable {
                     0.08 * sin((x + y) * .pi * 7)
             }
         case .coastChannel512:
-            return Self.levelLake(size: 512, surfaceLevel: 0.35) { x, y in
+            return Self.levelLake(size: 512, surfaceLevel: 0.55) { x, y in
                 let coast = -0.25 + 0.9 * x
                 let channelDistance = (y - 0.52) / 0.075
                 let channel = 0.55 * exp(-(channelDistance * channelDistance))
@@ -57,7 +57,7 @@ enum SimulationPreset: String, CaseIterable, Identifiable, Sendable {
 
     private static func levelLake(
         size: Int,
-        surfaceLevel: Double = 1,
+        surfaceLevel: Double = 2,
         bed: (_ normalizedX: Double, _ normalizedY: Double) -> Double
     ) -> SceneSeed {
         let count = size * size

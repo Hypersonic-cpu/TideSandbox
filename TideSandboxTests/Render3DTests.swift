@@ -86,6 +86,26 @@ final class Render3DTests: XCTestCase {
         ))
     }
 
+    func testElevationStatisticsMatchAnalyticalExtremaAndRejectInvalidFields() throws {
+        let statistics = try XCTUnwrap(HeightFieldStatistics(
+            bedElevation: [-2, 0.5, 1],
+            waterDepth: [0.5, -0.25, 3]
+        ))
+        XCTAssertEqual(statistics.minimumBedElevation, -2)
+        XCTAssertEqual(statistics.maximumBedElevation, 1)
+        XCTAssertEqual(statistics.maximumWaterDepth, 3)
+        XCTAssertEqual(statistics.maximumAbsoluteElevation, 4)
+
+        XCTAssertNil(HeightFieldStatistics(bedElevation: [], waterDepth: []))
+        XCTAssertNil(HeightFieldStatistics(bedElevation: [0], waterDepth: [0, 1]))
+        XCTAssertNil(HeightFieldStatistics(bedElevation: [.nan], waterDepth: [1]))
+        XCTAssertNil(HeightFieldStatistics(bedElevation: [0], waterDepth: [.infinity]))
+        XCTAssertNil(HeightFieldStatistics(
+            bedElevation: [.greatestFiniteMagnitude],
+            waterDepth: [.greatestFiniteMagnitude]
+        ))
+    }
+
     func testCameraPresetsRemainFiniteAtExtremeAspectRatiosAndFitCorners() {
         let aspects: [Float] = [0.01, 0.1, 1, 10, 100]
         for preset in CameraPreset.allCases {
@@ -126,6 +146,30 @@ final class Render3DTests: XCTestCase {
         }
     }
 
+    func testPresetSelectionSynchronizesYawAndPitchAndPitchRemainsBounded() {
+        let model = SimulationViewModel()
+        for preset in CameraPreset.allCases {
+            model.selectCameraPreset(preset)
+            XCTAssertEqual(model.cameraPreset, preset)
+            XCTAssertEqual(model.cameraYawDegrees, Double(preset.yawDegrees))
+            XCTAssertEqual(model.cameraPitchDegrees, Double(preset.pitchDegrees))
+        }
+        model.setCameraYawDegrees(203)
+        model.setCameraPitchDegrees(-27)
+        XCTAssertNil(model.cameraPreset)
+        XCTAssertEqual(model.cameraYawDegrees, 203)
+        XCTAssertEqual(model.cameraPitchDegrees, -27)
+
+        var camera = OrbitCamera()
+        camera.setOrientation(yawDegrees: 180, pitchDegrees: -40)
+        XCTAssertEqual(camera.state.yaw, .pi, accuracy: Float.ulpOfOne * 4)
+        XCTAssertEqual(camera.state.pitch, -40 * .pi / 180, accuracy: Float.ulpOfOne * 4)
+        camera.setOrientation(yawDegrees: 90, pitchDegrees: 30)
+        XCTAssertEqual(camera.state.pitch, -5 * .pi / 180, accuracy: Float.ulpOfOne * 4)
+        camera.setOrientation(yawDegrees: 90, pitchDegrees: -120)
+        XCTAssertEqual(camera.state.pitch, -89 * .pi / 180, accuracy: Float.ulpOfOne * 4)
+    }
+
     func testResourceTrackerRebuildsOnlyForDimensionChanges() throws {
         var tracker = HeightFieldResourceTracker()
         XCTAssertTrue(try tracker.register(width: 16, height: 16))
@@ -146,8 +190,12 @@ final class Render3DTests: XCTestCase {
         let before = model.snapshot
 
         model.viewportMode = .heightField3D
-        model.cameraPreset = .top
-        model.cameraPreset = .oppositeOblique
+        model.selectCameraPreset(.top)
+        model.selectCameraPreset(.oppositeOblique)
+        model.setCameraYawDegrees(205)
+        model.setCameraPitchDegrees(-24)
+        model.verticalExaggeration = 8
+        model.waterOpacity = 0.6
         model.viewportMode = .mosaic2D
 
         let after = model.snapshot

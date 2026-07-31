@@ -24,7 +24,7 @@ final class TideSandboxUITestsLaunchTests: XCTestCase {
 
         let attachment = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
         attachment.name = "Water Sandbox Launch"
-        attachment.lifetime = .keepAlways
+        attachment.lifetime = .deleteOnSuccess
         add(attachment)
     }
 }

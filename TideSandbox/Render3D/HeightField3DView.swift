@@ -8,7 +8,11 @@ struct HeightField3DView: View {
         ZStack {
             HeightFieldMetalView(
                 snapshot: model.snapshot,
-                cameraPreset: model.cameraPreset
+                cameraYawDegrees: Float(model.cameraYawDegrees),
+                cameraPitchDegrees: Float(model.cameraPitchDegrees),
+                minimumWetDepth: Float(model.minimumWetDepth),
+                verticalScale: Float(model.verticalExaggeration),
+                waterOpacity: Float(model.waterOpacity)
             )
             if MTLCreateSystemDefaultDevice() == nil {
                 ContentUnavailableView(

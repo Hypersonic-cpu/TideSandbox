@@ -62,8 +62,16 @@ struct OrbitCamera: Sendable {
     private(set) var aspectRatio: Float = 1
 
     mutating func apply(_ preset: CameraPreset) {
-        state.yaw = preset.yawDegrees * .pi / 180
-        state.pitch = preset.pitchDegrees * .pi / 180
+        setOrientation(
+            yawDegrees: preset.yawDegrees,
+            pitchDegrees: preset.pitchDegrees
+        )
+    }
+
+    mutating func setOrientation(yawDegrees: Float, pitchDegrees: Float) {
+        guard yawDegrees.isFinite, pitchDegrees.isFinite else { return }
+        state.yaw = yawDegrees * .pi / 180
+        state.pitch = pitchDegrees * .pi / 180
         clampState()
     }
 

@@ -8,26 +8,35 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
         let gridSize: SIMD4<UInt32>
         let elevationRange: SIMD4<Float>
         let lightDirection: SIMD4<Float>
+        let waterParameters: SIMD4<Float>
+    }
+
+    private struct ScalarBufferSet {
+        let bedElevation: MTLBuffer
+        let waterDepth: MTLBuffer
     }
 
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
     private let diagnosticPipeline: MTLRenderPipelineState
     private let terrainPipeline: MTLRenderPipelineState
+    private let waterPipeline: MTLRenderPipelineState
     private let terrainDepthState: MTLDepthStencilState
+    private let waterDepthState: MTLDepthStencilState
     private var resourceTracker = HeightFieldResourceTracker()
     private var mesh: HeightFieldMesh?
     private var indexBuffer: MTLBuffer?
-    private var bedElevationBuffers: [MTLBuffer] = []
+    private var scalarBufferSets: [ScalarBufferSet] = []
     private var activeScalarBufferIndex = 0
     private var orbitCamera = OrbitCamera()
-    private var cameraPreset: CameraPreset = .isometric
     private var settings = Render3DSettings()
     private var domainWidth: Float = 1
     private var domainHeight: Float = 1
     private var minimumBedElevation: Float = 0
     private var maximumBedElevation: Float = 0
+    private var maximumWaterDepth: Float = 0
     private var maximumAbsoluteElevation: Float = 0
+    private var minimumWetDepth: Float = 1.0e-6
     private(set) var snapshotGeneration: UInt64 = .max
     private(set) var drawableSize: CGSize = .zero
 
@@ -38,7 +47,9 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
               let vertexFunction = library.makeFunction(name: "diagnosticVertex"),
               let fragmentFunction = library.makeFunction(name: "diagnosticFragment"),
               let terrainVertex = library.makeFunction(name: "terrainVertex"),
-              let terrainFragment = library.makeFunction(name: "terrainFragment") else {
+              let terrainFragment = library.makeFunction(name: "terrainFragment"),
+              let waterVertex = library.makeFunction(name: "waterVertex"),
+              let waterFragment = library.makeFunction(name: "waterFragment") else {
             return nil
         }
 
@@ -56,28 +67,53 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
         terrainDescriptor.colorAttachments[0].pixelFormat = view.colorPixelFormat
         terrainDescriptor.depthAttachmentPixelFormat = view.depthStencilPixelFormat
 
+        let waterDescriptor = MTLRenderPipelineDescriptor()
+        waterDescriptor.label = "3D water"
+        waterDescriptor.vertexFunction = waterVertex
+        waterDescriptor.fragmentFunction = waterFragment
+        waterDescriptor.colorAttachments[0].pixelFormat = view.colorPixelFormat
+        waterDescriptor.depthAttachmentPixelFormat = view.depthStencilPixelFormat
+        guard let waterColor = waterDescriptor.colorAttachments[0] else {
+            return nil
+        }
+        waterColor.isBlendingEnabled = true
+        waterColor.rgbBlendOperation = .add
+        waterColor.alphaBlendOperation = .add
+        waterColor.sourceRGBBlendFactor = .one
+        waterColor.sourceAlphaBlendFactor = .one
+        waterColor.destinationRGBBlendFactor = .oneMinusSourceAlpha
+        waterColor.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+
         let depthDescriptor = MTLDepthStencilDescriptor()
         depthDescriptor.label = "Terrain depth"
         depthDescriptor.depthCompareFunction = .less
         depthDescriptor.isDepthWriteEnabled = true
+        let waterDepthDescriptor = MTLDepthStencilDescriptor()
+        waterDepthDescriptor.label = "Water depth"
+        waterDepthDescriptor.depthCompareFunction = .lessEqual
+        waterDepthDescriptor.isDepthWriteEnabled = false
         do {
             diagnosticPipeline = try device.makeRenderPipelineState(
                 descriptor: diagnosticDescriptor
             )
             terrainPipeline = try device.makeRenderPipelineState(descriptor: terrainDescriptor)
+            waterPipeline = try device.makeRenderPipelineState(descriptor: waterDescriptor)
         } catch {
             return nil
         }
         guard let terrainDepthState = device.makeDepthStencilState(
             descriptor: depthDescriptor
+        ),
+              let waterDepthState = device.makeDepthStencilState(
+                descriptor: waterDepthDescriptor
         ) else {
             return nil
         }
         self.device = device
         self.commandQueue = commandQueue
         self.terrainDepthState = terrainDepthState
+        self.waterDepthState = waterDepthState
         super.init()
-        orbitCamera.apply(cameraPreset)
         resize(drawableSize: view.drawableSize)
     }
 
@@ -88,17 +124,12 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
             height: snapshot.height
         ),
               snapshot.bedElevation.count == counts.vertexCount,
-              let firstElevation = snapshot.bedElevation.first,
-              firstElevation.isFinite else {
+              snapshot.waterDepth.count == counts.vertexCount,
+              let statistics = HeightFieldStatistics(
+                bedElevation: snapshot.bedElevation,
+                waterDepth: snapshot.waterDepth
+              ) else {
             return
-        }
-
-        var minimum = firstElevation
-        var maximum = firstElevation
-        for value in snapshot.bedElevation.dropFirst() {
-            guard value.isFinite else { return }
-            minimum = min(minimum, value)
-            maximum = max(maximum, value)
         }
         let newDomainWidth = Float(snapshot.domainWidth)
         let newDomainHeight = Float(snapshot.domainHeight)
@@ -123,17 +154,15 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
             }
         }
 
-        guard !bedElevationBuffers.isEmpty else { return }
-        activeScalarBufferIndex = (activeScalarBufferIndex + 1) % bedElevationBuffers.count
-        let destination = bedElevationBuffers[activeScalarBufferIndex].contents()
-        snapshot.bedElevation.withUnsafeBytes { source in
-            if let baseAddress = source.baseAddress {
-                memcpy(destination, baseAddress, source.count)
-            }
-        }
-        minimumBedElevation = minimum
-        maximumBedElevation = maximum
-        maximumAbsoluteElevation = max(abs(minimum), abs(maximum))
+        guard !scalarBufferSets.isEmpty else { return }
+        activeScalarBufferIndex = (activeScalarBufferIndex + 1) % scalarBufferSets.count
+        let activeBuffers = scalarBufferSets[activeScalarBufferIndex]
+        Self.copy(snapshot.bedElevation, to: activeBuffers.bedElevation)
+        Self.copy(snapshot.waterDepth, to: activeBuffers.waterDepth)
+        minimumBedElevation = statistics.minimumBedElevation
+        maximumBedElevation = statistics.maximumBedElevation
+        maximumWaterDepth = statistics.maximumWaterDepth
+        maximumAbsoluteElevation = statistics.maximumAbsoluteElevation
         domainWidth = newDomainWidth
         domainHeight = newDomainHeight
         if dimensionsChanged {
@@ -142,10 +171,28 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
         snapshotGeneration = snapshot.generation
     }
 
-    func setCameraPreset(_ preset: CameraPreset) {
-        guard cameraPreset != preset else { return }
-        cameraPreset = preset
-        orbitCamera.apply(preset)
+    func setCameraOrientation(yawDegrees: Float, pitchDegrees: Float) {
+        orbitCamera.setOrientation(
+            yawDegrees: yawDegrees,
+            pitchDegrees: pitchDegrees
+        )
+    }
+
+    func setMinimumWetDepth(_ value: Float) {
+        minimumWetDepth = value.isFinite && value >= 0 ? value : 0
+    }
+
+    func setVerticalScale(_ value: Float) {
+        let newValue = min(max(value.isFinite ? value : 1, 1), 20)
+        guard settings.verticalScale != newValue else { return }
+        settings.verticalScale = newValue
+        if mesh != nil {
+            fitCamera()
+        }
+    }
+
+    func setWaterOpacity(_ value: Float) {
+        settings.waterOpacity = min(max(value.isFinite ? value : 0.72, 0.2), 1)
     }
 
     func resize(drawableSize: CGSize) {
@@ -174,7 +221,15 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
         commandBuffer.label = "3D height-field frame"
         if let mesh,
            let indexBuffer,
-           !bedElevationBuffers.isEmpty {
+           !scalarBufferSets.isEmpty {
+            let activeBuffers = scalarBufferSets[activeScalarBufferIndex]
+            let uniforms = frameUniforms(mesh: mesh)
+            withUnsafeBytes(of: uniforms) { bytes in
+                guard let baseAddress = bytes.baseAddress else { return }
+                encoder.setVertexBytes(baseAddress, length: bytes.count, index: 1)
+                encoder.setFragmentBytes(baseAddress, length: bytes.count, index: 1)
+            }
+
             encoder.label = "3D terrain pass"
             encoder.setRenderPipelineState(terrainPipeline)
             encoder.setDepthStencilState(terrainDepthState)
@@ -182,24 +237,25 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
             encoder.setFrontFacing(.counterClockwise)
             encoder.setTriangleFillMode(settings.wireframeTerrain ? .lines : .fill)
             encoder.setVertexBuffer(
-                bedElevationBuffers[activeScalarBufferIndex],
+                activeBuffers.bedElevation,
                 offset: 0,
                 index: 0
             )
-            let uniforms = frameUniforms(mesh: mesh)
-            withUnsafeBytes(of: uniforms) { bytes in
-                guard let baseAddress = bytes.baseAddress else { return }
-                encoder.setVertexBytes(
-                    baseAddress,
-                    length: bytes.count,
-                    index: 1
-                )
-                encoder.setFragmentBytes(
-                    baseAddress,
-                    length: bytes.count,
-                    index: 1
-                )
-            }
+            encoder.drawIndexedPrimitives(
+                type: .triangle,
+                indexCount: mesh.indexCount,
+                indexType: .uint32,
+                indexBuffer: indexBuffer,
+                indexBufferOffset: 0
+            )
+
+            encoder.label = "3D water pass"
+            encoder.setRenderPipelineState(waterPipeline)
+            encoder.setDepthStencilState(waterDepthState)
+            encoder.setCullMode(.back)
+            encoder.setFrontFacing(.counterClockwise)
+            encoder.setTriangleFillMode(settings.wireframeWater ? .lines : .fill)
+            encoder.setVertexBuffer(activeBuffers.waterDepth, offset: 0, index: 2)
             encoder.drawIndexedPrimitives(
                 type: .triangle,
                 indexCount: mesh.indexCount,
@@ -230,19 +286,29 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
             )
         }
         let scalarByteCount = newMesh.vertexCount * MemoryLayout<Float>.stride
-        let newBedBuffers = (0..<3).compactMap { index -> MTLBuffer? in
-            let buffer = device.makeBuffer(
+        let newScalarBufferSets = (0..<3).compactMap { index -> ScalarBufferSet? in
+            guard let bedBuffer = device.makeBuffer(
                 length: scalarByteCount,
                 options: .storageModeShared
+            ),
+                  let waterBuffer = device.makeBuffer(
+                    length: scalarByteCount,
+                    options: .storageModeShared
+                  ) else {
+                return nil
+            }
+            bedBuffer.label = "Bed elevation \(index)"
+            waterBuffer.label = "Water depth \(index)"
+            return ScalarBufferSet(
+                bedElevation: bedBuffer,
+                waterDepth: waterBuffer
             )
-            buffer?.label = "Bed elevation \(index)"
-            return buffer
         }
-        guard let newIndexBuffer, newBedBuffers.count == 3 else { return false }
+        guard let newIndexBuffer, newScalarBufferSets.count == 3 else { return false }
         newIndexBuffer.label = "Height-field indices"
         mesh = newMesh
         indexBuffer = newIndexBuffer
-        bedElevationBuffers = newBedBuffers
+        scalarBufferSets = newScalarBufferSets
         activeScalarBufferIndex = 0
         return true
     }
@@ -256,7 +322,6 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
             verticalScale: settings.verticalScale,
             aspectRatio: Float(drawableSize.width / drawableSize.height)
         )
-        orbitCamera.apply(cameraPreset)
     }
 
     private func frameUniforms(mesh: HeightFieldMesh) -> FrameUniforms {
@@ -280,9 +345,22 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
                 settings.verticalScale,
                 minimumBedElevation,
                 maximumBedElevation,
-                0
+                maximumWaterDepth
             ),
-            lightDirection: SIMD4<Float>(settings.lightDirection, 0)
+            lightDirection: SIMD4<Float>(settings.lightDirection, 0),
+            waterParameters: SIMD4<Float>(
+                minimumWetDepth,
+                settings.shorelineBand,
+                settings.waterOpacity,
+                settings.renderBias
+            )
         )
+    }
+
+    private static func copy(_ values: [Float], to buffer: MTLBuffer) {
+        values.withUnsafeBytes { source in
+            guard let baseAddress = source.baseAddress else { return }
+            memcpy(buffer.contents(), baseAddress, source.count)
+        }
     }
 }

@@ -101,6 +101,10 @@ struct MainWindowView: View {
             .pickerStyle(.segmented)
             .frame(width: 360)
             .accessibilityIdentifier("terrain-tool-picker")
+            .disabled(model.viewportMode == .heightField3D)
+            .help(model.viewportMode == .heightField3D
+                  ? "Terrain editing is available in 2D mode."
+                  : "Choose a terrain editing tool")
         }
         .labelStyle(.iconOnly)
         .buttonStyle(.borderless)
@@ -193,33 +197,75 @@ private struct InspectorView: View {
             .pickerStyle(.segmented)
             .accessibilityIdentifier("viewport-mode-picker")
             if model.viewportMode == .heightField3D {
-                Picker("Camera", selection: $model.cameraPreset) {
+                Picker("Camera", selection: Binding(
+                    get: { model.cameraPreset },
+                    set: model.selectCameraPreset
+                )) {
+                    Text("Custom").tag(CameraPreset?.none)
                     ForEach(CameraPreset.allCases) { preset in
-                        Text(preset.title).tag(preset)
+                        Text(preset.title).tag(CameraPreset?.some(preset))
                     }
                 }
                 .accessibilityIdentifier("camera-preset-picker")
-            }
-            Picker("Quantity", selection: Binding(
-                get: { model.displayMode },
-                set: model.selectDisplayMode
-            )) {
-                ForEach(DisplayMode.allCases) { mode in
-                    Text(mode.title).tag(mode)
+                LabeledSlider(
+                    title: "Yaw",
+                    value: Binding(
+                        get: { model.cameraYawDegrees },
+                        set: model.setCameraYawDegrees
+                    ),
+                    range: 0...360,
+                    format: "%.0f°",
+                    accessibilityIdentifier: "camera-yaw-slider"
+                )
+                LabeledSlider(
+                    title: "Pitch",
+                    value: Binding(
+                        get: { model.cameraPitchDegrees },
+                        set: model.setCameraPitchDegrees
+                    ),
+                    range: -89 ... -5,
+                    format: "%.0f°",
+                    accessibilityIdentifier: "camera-pitch-slider"
+                )
+                LabeledSlider(
+                    title: "Vertical exaggeration",
+                    value: $model.verticalExaggeration,
+                    range: 1...20,
+                    format: "%.1f×",
+                    accessibilityIdentifier: "vertical-exaggeration-slider"
+                )
+                LabeledSlider(
+                    title: "Water opacity",
+                    value: Binding(
+                        get: { model.waterOpacity * 100 },
+                        set: { model.waterOpacity = $0 / 100 }
+                    ),
+                    range: 20...100,
+                    format: "%.0f%%",
+                    accessibilityIdentifier: "water-opacity-slider"
+                )
+            } else {
+                Picker("Quantity", selection: Binding(
+                    get: { model.displayMode },
+                    set: model.selectDisplayMode
+                )) {
+                    ForEach(DisplayMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
                 }
-            }
-            Picker("Colors", selection: $model.palette) {
-                ForEach(ColorPalette.allCases) { palette in
-                    Text(palette.title).tag(palette)
+                Picker("Colors", selection: $model.palette) {
+                    ForEach(ColorPalette.allCases) { palette in
+                        Text(palette.title).tag(palette)
+                    }
                 }
-            }
-            Picker("Sampling", selection: $model.resolutionPolicy) {
-                ForEach(DisplayResolutionPolicy.allCases) { policy in
-                    Text(policy.title).tag(policy)
+                Picker("Sampling", selection: $model.resolutionPolicy) {
+                    ForEach(DisplayResolutionPolicy.allCases) { policy in
+                        Text(policy.title).tag(policy)
+                    }
                 }
+                .accessibilityIdentifier("resolution-policy-picker")
+                Toggle("Grid lines", isOn: $model.showGrid)
             }
-            .accessibilityIdentifier("resolution-policy-picker")
-            Toggle("Grid lines", isOn: $model.showGrid)
         }
     }
 
@@ -290,15 +336,19 @@ private struct InspectorView: View {
             DiagnosticRow(label: "Grid", value: "\(model.snapshot.width) × \(model.snapshot.height)")
                 .accessibilityIdentifier("grid-diagnostic")
             DiagnosticRow(label: "Time", value: String(format: "%.3f s", diagnostics.simulatedTime))
+                .accessibilityIdentifier("time-diagnostic")
             DiagnosticRow(label: "Volume", value: String(format: "%.6g m³", diagnostics.totalVolume))
+                .accessibilityIdentifier("volume-diagnostic")
             DiagnosticRow(label: "Depth", value: String(
                 format: "%.3g…%.3g m", diagnostics.minimumDepth, diagnostics.maximumDepth
             ))
+            .accessibilityIdentifier("depth-diagnostic")
             DiagnosticRow(label: "Max speed", value: String(
                 format: "%.3g m/s",
                 hypot(diagnostics.maximumAbsVelocityX, diagnostics.maximumAbsVelocityY)
             ))
             DiagnosticRow(label: "Wet cells", value: "\(diagnostics.wetCellCount)")
+                .accessibilityIdentifier("wet-cells-diagnostic")
             DiagnosticRow(label: "Substeps", value: "\(diagnostics.substepCount)")
             if !diagnostics.isFinite {
                 Label("Non-finite numerical state", systemImage: "exclamationmark.triangle.fill")
@@ -327,6 +377,7 @@ private struct LabeledSlider: View {
     @Binding var value: Double
     let range: ClosedRange<Double>
     let format: String
+    var accessibilityIdentifier = ""
 
     var body: some View {
         VStack(spacing: 3) {
@@ -338,6 +389,7 @@ private struct LabeledSlider: View {
                     .monospacedDigit()
             }
             Slider(value: $value, in: range)
+                .accessibilityIdentifier(accessibilityIdentifier)
         }
     }
 }

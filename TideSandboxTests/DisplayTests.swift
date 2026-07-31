@@ -269,6 +269,10 @@ final class BridgeTests: XCTestCase {
         for preset in SimulationPreset.allCases {
             let seed = preset.makeSeed()
             let count = seed.width * seed.height
+            let expectedSurfaceLevel: Double = switch preset {
+            case .flat16, .centerBump32, .unevenBed128: 2
+            case .coastChannel512: 0.55
+            }
 
             XCTAssertEqual(seed.height, seed.width, "\(preset.title) must be square")
             XCTAssertEqual(seed.bedElevation.count, count)
@@ -287,6 +291,22 @@ final class BridgeTests: XCTestCase {
                 4 * Double(Float.ulpOfOne),
                 "\(preset.title) should initialize as level water"
             )
+            XCTAssertEqual(
+                try XCTUnwrap(wetSurfaces.min()),
+                expectedSurfaceLevel,
+                accuracy: 4 * Double(Float.ulpOfOne)
+            )
+            XCTAssertEqual(
+                try XCTUnwrap(wetSurfaces.max()),
+                expectedSurfaceLevel,
+                accuracy: 4 * Double(Float.ulpOfOne)
+            )
+            if preset == .coastChannel512 {
+                XCTAssertTrue(seed.waterDepth.contains(0), "the raised coast must stay exposed")
+                XCTAssertGreaterThan(try XCTUnwrap(seed.waterDepth.max()), 1)
+            } else {
+                XCTAssertGreaterThan(try XCTUnwrap(seed.waterDepth.min()), 1.5)
+            }
 
             let bridge = WSWaterEngineBridge(
                 width: UInt(seed.width),

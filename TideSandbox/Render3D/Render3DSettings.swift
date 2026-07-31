@@ -1,7 +1,7 @@
 import simd
 
 struct Render3DSettings: Sendable, Equatable {
-    var verticalScale: Float = 1
+    var verticalScale: Float = 6
     var waterOpacity: Float = 0.72
     var lightDirection = SIMD3<Float>(-0.35, 0.85, 0.4)
     var shorelineBand: Float = 4

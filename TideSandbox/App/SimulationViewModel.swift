@@ -40,7 +40,11 @@ final class SimulationViewModel: ObservableObject {
     @Published private(set) var snapshot: SimulationSnapshot = .empty
     @Published private(set) var isPlaying = false
     @Published var viewportMode: ViewportMode = .mosaic2D
-    @Published var cameraPreset: CameraPreset = .isometric
+    @Published private(set) var cameraPreset: CameraPreset? = .isometric
+    @Published private(set) var cameraYawDegrees = 45.0
+    @Published private(set) var cameraPitchDegrees = -35.0
+    @Published var verticalExaggeration = 6.0
+    @Published var waterOpacity = 0.72
     @Published var selectedPreset: SimulationPreset = .centerBump32
     @Published var displayMode: DisplayMode = .waterDepth
     @Published var palette: ColorPalette = .blueWhite
@@ -262,6 +266,23 @@ final class SimulationViewModel: ObservableObject {
     func selectDisplayMode(_ mode: DisplayMode) {
         displayMode = mode
         palette = mode.preferredPalette
+    }
+
+    func selectCameraPreset(_ preset: CameraPreset?) {
+        guard let preset else { return }
+        cameraPreset = preset
+        cameraYawDegrees = Double(preset.yawDegrees)
+        cameraPitchDegrees = Double(preset.pitchDegrees)
+    }
+
+    func setCameraYawDegrees(_ value: Double) {
+        cameraPreset = nil
+        cameraYawDegrees = min(max(value.isFinite ? value : 45, 0), 360)
+    }
+
+    func setCameraPitchDegrees(_ value: Double) {
+        cameraPreset = nil
+        cameraPitchDegrees = min(max(value.isFinite ? value : -35, -89), -5)
     }
 
     func applyConfiguration() {

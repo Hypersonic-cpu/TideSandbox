@@ -295,3 +295,47 @@ Normally signed UI suite: 10/10 passed, 141.432 s
 Four-camera UI scenario:  passed, 22.668 s
 git diff --check:          passed
 ```
+
+## 2026-08-01 — 3D Phase 4 dynamic water complete
+
+- Added a second height-field pass driven only by immutable snapshot
+  `bedElevation + max(waterDepth, 0)`. Bed and depth use the same rotating
+  triple-buffer slot, so a rendered frame cannot combine fields from different
+  generations; repeated generations still skip upload.
+- Added shader-derived SWE-surface normals, strict solver-threshold wet/dry
+  fragment clipping, a narrow shoreline fade, display-only height bias,
+  shallow-to-deep blue color, restrained diffuse/specular/Fresnel lighting, and
+  premultiplied alpha with depth testing enabled and depth writes disabled.
+- Added an allocation-free validation/statistics pass. Mismatched or non-finite
+  fields and overflowing surface values are rejected before either GPU buffer is
+  touched; render bounds include both terrain and water elevations.
+- Deepened the four default scenes as requested while preserving exact
+  lake-at-rest balance. Flat, Center Bump, and Uneven Bed now use a 2.0 m level
+  surface; Coast Channel uses 0.55 m and retains exposed high ground. Regenerated
+  `.waterscene` depth fields and affected previews from the committed generator.
+- Added 3D-only Yaw, Pitch, vertical-exaggeration, and water-opacity sliders.
+  Presets synchronize the angle bars, manual angle changes display as Custom,
+  and the default 6× exaggeration makes terrain relief and tide elevation clear.
+  Terrain tools are disabled in 3D with the documented 2D-editing explanation.
+- Added a controlled moving-water UI experiment: the existing 2D brush raises a
+  central perturbation, Step and Play advance it in 3D, displayed volume remains
+  unchanged, and custom plus low-oblique window-only views retain the propagated
+  surface. A separate 16² → 512² test verifies resource changes, reset, finite
+  diagnostics, and a coast containing both wet and dry cells.
+- Visually inspected seven retained screenshots on the active display. All four
+  preset cameras preserve orientation and depth order; the moving wave remains
+  continuous; the 512² coast exposes high terrain with a stable clipped
+  shoreline; controls are legible and unclipped. Seven images stay below the
+  eight-image validation budget.
+
+Verification:
+
+```text
+Signed Debug build with water shaders: passed
+Complete product XCTest:              36/36 passed
+Normally signed UI suite:              12/12 passed, 192.198 s
+Focused moving-water UI scenario:       1/1 passed, 23.974 s
+Focused 16² ↔ 512²/reset UI scenario:   1/1 passed, 28.031 s
+Retained final-run screenshots:         7/8 maximum
+git diff --check:                       passed
+```

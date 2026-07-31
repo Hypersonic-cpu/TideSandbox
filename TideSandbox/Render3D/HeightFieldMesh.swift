@@ -112,3 +112,46 @@ enum HeightFieldScalar {
         waterDepth > minimumWetDepth
     }
 }
+
+struct HeightFieldStatistics: Sendable, Equatable {
+    let minimumBedElevation: Float
+    let maximumBedElevation: Float
+    let maximumWaterDepth: Float
+    let maximumAbsoluteElevation: Float
+
+    init?(bedElevation: [Float], waterDepth: [Float]) {
+        guard bedElevation.count == waterDepth.count,
+              let firstBed = bedElevation.first,
+              let firstDepth = waterDepth.first,
+              firstBed.isFinite,
+              firstDepth.isFinite else {
+            return nil
+        }
+
+        let firstNonnegativeDepth = max(firstDepth, 0)
+        let firstSurface = firstBed + firstNonnegativeDepth
+        guard firstSurface.isFinite else { return nil }
+
+        var minimumBed = firstBed
+        var maximumBed = firstBed
+        var maximumDepth = firstNonnegativeDepth
+        var maximumAbsolute = max(abs(firstBed), abs(firstSurface))
+        for index in bedElevation.indices.dropFirst() {
+            let bed = bedElevation[index]
+            let depth = waterDepth[index]
+            guard bed.isFinite, depth.isFinite else { return nil }
+            let nonnegativeDepth = max(depth, 0)
+            let surface = bed + nonnegativeDepth
+            guard surface.isFinite else { return nil }
+            minimumBed = min(minimumBed, bed)
+            maximumBed = max(maximumBed, bed)
+            maximumDepth = max(maximumDepth, nonnegativeDepth)
+            maximumAbsolute = max(maximumAbsolute, max(abs(bed), abs(surface)))
+        }
+
+        minimumBedElevation = minimumBed
+        maximumBedElevation = maximumBed
+        maximumWaterDepth = maximumDepth
+        maximumAbsoluteElevation = maximumAbsolute
+    }
+}

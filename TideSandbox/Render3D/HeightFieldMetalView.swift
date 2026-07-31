@@ -4,7 +4,11 @@ import SwiftUI
 
 struct HeightFieldMetalView: NSViewRepresentable {
     let snapshot: SimulationSnapshot
-    let cameraPreset: CameraPreset
+    let cameraYawDegrees: Float
+    let cameraPitchDegrees: Float
+    let minimumWetDepth: Float
+    let verticalScale: Float
+    let waterOpacity: Float
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -28,15 +32,28 @@ struct HeightFieldMetalView: NSViewRepresentable {
         if let renderer = HeightFieldRenderer(view: view) {
             context.coordinator.renderer = renderer
             view.delegate = renderer
+            renderer.setMinimumWetDepth(minimumWetDepth)
+            renderer.setVerticalScale(verticalScale)
+            renderer.setWaterOpacity(waterOpacity)
             renderer.update(snapshot: snapshot)
-            renderer.setCameraPreset(cameraPreset)
+            renderer.setCameraOrientation(
+                yawDegrees: cameraYawDegrees,
+                pitchDegrees: cameraPitchDegrees
+            )
         }
         return view
     }
 
     func updateNSView(_ view: InteractiveMTKView, context: Context) {
-        context.coordinator.renderer?.update(snapshot: snapshot)
-        context.coordinator.renderer?.setCameraPreset(cameraPreset)
+        let renderer = context.coordinator.renderer
+        renderer?.setMinimumWetDepth(minimumWetDepth)
+        renderer?.setVerticalScale(verticalScale)
+        renderer?.setWaterOpacity(waterOpacity)
+        renderer?.update(snapshot: snapshot)
+        renderer?.setCameraOrientation(
+            yawDegrees: cameraYawDegrees,
+            pitchDegrees: cameraPitchDegrees
+        )
         view.setNeedsDisplay(view.bounds)
     }
 
