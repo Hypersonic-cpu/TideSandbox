@@ -72,4 +72,86 @@ final class TideSandboxUITests: XCTestCase {
         screenshot.lifetime = .keepAlways
         add(screenshot)
     }
+
+    @MainActor
+    func testSavedSceneSurvivesRelaunchInGallery() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["WATER_SANDBOX_STORAGE_NAMESPACE"] = "PersistenceRelaunch"
+        app.launchArguments = ["--reset-scene-storage"]
+        app.launch()
+
+        let gallery = app.buttons["gallery-button"]
+        XCTAssertTrue(gallery.waitForExistence(timeout: 8))
+        gallery.click()
+        XCTAssertTrue(waitForGalleryCount("4", in: app))
+        let flatCard = app.buttons[
+            "scene-card-10000000-0000-4000-8000-000000000016"
+        ]
+        XCTAssertTrue(flatCard.waitForExistence(timeout: 3))
+        flatCard.click()
+        app.buttons["open-scene-button"].click()
+        XCTAssertTrue(waitForValue("16 × 16", identifier: "grid-diagnostic", in: app))
+
+        app.buttons["step-button"].click()
+        let saveMenu = app.menuButtons["save-scene-menu"]
+        XCTAssertTrue(saveMenu.waitForExistence(timeout: 3))
+        saveMenu.click()
+        let saveItem = app.menuItems["Save"]
+        XCTAssertTrue(saveItem.waitForExistence(timeout: 2))
+        saveItem.click()
+
+        gallery.click()
+        XCTAssertTrue(waitForGalleryCount("5", in: app))
+        app.buttons["Done"].click()
+        app.terminate()
+
+        app.launchArguments = []
+        app.launch()
+        XCTAssertTrue(gallery.waitForExistence(timeout: 8))
+        gallery.click()
+        XCTAssertTrue(waitForGalleryCount("5", in: app))
+
+        let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        screenshot.name = "Water Sandbox Persistent Gallery"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor
+    func testUnsavedChangesRequireConfirmationBeforeSceneReplacement() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["WATER_SANDBOX_STORAGE_NAMESPACE"] = "DirtyWarning"
+        app.launchArguments = ["--reset-scene-storage"]
+        app.launch()
+
+        let step = app.buttons["step-button"]
+        let load = app.buttons["load-preset-button"]
+        XCTAssertTrue(step.waitForExistence(timeout: 8))
+        step.click()
+        load.click()
+
+        let warning = app.staticTexts["Discard unsaved changes?"]
+        XCTAssertTrue(warning.waitForExistence(timeout: 3))
+        let cancel = app.sheets.firstMatch.buttons["Cancel"]
+        XCTAssertTrue(cancel.exists)
+        cancel.click()
+        XCTAssertFalse(warning.exists)
+        XCTAssertTrue(waitForValue("32 × 32", identifier: "grid-diagnostic", in: app))
+    }
+
+    private func waitForGalleryCount(_ count: String, in app: XCUIApplication) -> Bool {
+        waitForValue(count, identifier: "gallery-count", in: app)
+    }
+
+    private func waitForValue(
+        _ value: String,
+        identifier: String,
+        in app: XCUIApplication
+    ) -> Bool {
+        let element = app.descendants(matching: .any)[identifier]
+        guard element.waitForExistence(timeout: 8) else { return false }
+        let predicate = NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", value, value)
+        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: element)
+        return XCTWaiter().wait(for: [expectation], timeout: 8) == .completed
+    }
 }

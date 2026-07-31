@@ -34,3 +34,20 @@
 - A concurrency audit found the snapshot callback being assigned on the main
   actor while the timer could read it from the runtime queue. Replaced the public
   mutable callback with queue-confined installation and invocation.
+
+## 2026-08-01 — Phase 4
+
+- Scene-card accessibility identifiers initially propagated to every child in a
+  SwiftUI gesture container, making one identifier match several elements.
+  Replaced the gesture container with one semantic button per card. This fixed
+  UI automation and keyboard/accessibility behavior together.
+- The unsaved-change UI test initially matched both the alert's Cancel button and
+  a Touch Bar Cancel button. Scoped the query to the alert sheet.
+- A custom Info.plist was initially copied into app resources by Xcode's
+  file-system-synchronized group. Added a target membership exception so it is
+  processed only as the bundle Info.plist; the build warning disappeared.
+- Catalog validation originally checked only package existence and UUID. It now
+  compares all cached metadata with the authoritative manifest and rebuilds if
+  any field is stale.
+- PNG validation originally checked only the eight-byte signature. It now asks
+  ImageIO to decode exactly one image, rejecting truncated or spoofed previews.

@@ -103,3 +103,50 @@ Visual verification was performed on display 2 only. The 32² view showed crisp,
 aligned cell tiles and grid lines. A retained window-only 512² coast/channel
 capture confirmed the selected preset, 512 × 512 diagnostic, uninterpolated
 mosaic, legible floating controls, and non-overlapping inspector layout.
+
+## 2026-08-01 — Phase 4 complete
+
+- Defined and documented schema-1 `.waterscene` packages in
+  `Docs/WaterSceneFormat.md`: explicit little-endian IEEE-754 `Float32` fields,
+  bottom-to-top row-major orientation, versioned JSON metadata, PNG preview, and
+  no transient velocity persistence.
+- Added strict package validation for schema/encoding, dimensions and overflow,
+  physical sizes, solver parameters, safe unique resource names, symbolic links,
+  exact field byte counts, finite bed values, nonnegative finite depth, UTF-8
+  notes, and decodable single-image PNG previews.
+- Added same-volume temporary-package validation and atomic directory
+  replacement. User/imported scenes live in UUID-named packages under
+  Application Support; large matrices remain ordinary binary files.
+- Added an actor-owned repository with a package-authoritative, rebuildable
+  `catalog.json`. Missing, corrupt, stale, or mismatched catalog metadata causes
+  a deterministic rebuild from valid scene packages.
+- Added validated package import with security-scoped access, UUID collision
+  handling, source tagging, durable catalog insertion, and readable errors.
+- Generated four reproducible application-bundle packages at 16², 32², 128²,
+  and 512², including a coast/channel scene. Fixed IDs and a committed generator
+  make their manifests, fields, and previews reproducible. Built-ins open
+  read-only and Save creates a user copy.
+- Added a preview gallery, exported macOS document type, Save, Save As,
+  overwrite-save, restore, import, and dirty-state confirmation. Gallery and
+  file operations run outside the simulation runtime and do not expose Engine
+  state.
+- Added isolated signed UI persistence storage for tests, so relaunch coverage
+  never changes ordinary user scenes.
+
+Verification:
+
+```text
+Persistence XCTest:       7/7 passed, 1.769 s
+Complete product XCTest: 23/23 passed, 10.828 s
+Signed macOS UI suite:     6/6 passed, 69.141 s
+Focused Save/Save As:      passed, 1.032 s
+Debug app build:           passed
+Release app build:         passed
+Info.plist validation:     passed
+git diff --check:          passed
+```
+
+After the secondary display was disconnected, visual verification continued on
+the remaining main display as directed. The window-only gallery capture showed
+five durable scenes after relaunch, correctly oriented previews, lock badges on
+all four built-ins, an unlocked user copy, and an unclipped responsive layout.

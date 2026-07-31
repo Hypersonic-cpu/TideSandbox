@@ -1,0 +1,35 @@
+{
+  "createdAt" : "2026-07-31T15:00:00Z",
+  "description" : "A high-resolution sloping coast cut by a submerged channel.",
+  "domainHeight" : 512,
+  "domainWidth" : 512,
+  "gridHeight" : 512,
+  "gridWidth" : 512,
+  "id" : "10000000-0000-4000-8000-000000000512",
+  "initializationMode" : "explicitDepth",
+  "modifiedAt" : "2026-07-31T15:00:00Z",
+  "name" : "512 × 512 Coast Channel",
+  "resources" : {
+    "bedElevation" : "bed_elevation.bin",
+    "initialWaterDepth" : "initial_water_depth.bin",
+    "preview" : "preview.png"
+  },
+  "schemaVersion" : 1,
+  "solver" : {
+    "cflNumber" : 0.3,
+    "gravity" : 9.81,
+    "linearDamping" : 0.08,
+    "minimumWetDepth" : 1e-06,
+    "workerCount" : 0
+  },
+  "source" : "builtIn",
+  "storedByteOrder" : "little-endian",
+  "storedRowOrder" : "row-major-bottom-to-top",
+  "storedScalarType" : "float32",
+  "tags" : [
+    "built-in",
+    "coast",
+    "channel",
+    "large"
+  ]
+}

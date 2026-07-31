@@ -63,3 +63,31 @@ vertical row reversal. Pointer mapping applies the inverse transform.
 Grid lines are drawn only when a displayed tile is at least four points wide.
 They remain an optional inspection aid at small scales without obscuring the
 512² scalar field.
+
+## DD-008 — Versioned package with ordinary field files
+
+`.waterscene` is a directory package, not a monolithic archive or database.
+Metadata is human-readable JSON, while bed and initial depth are portable,
+little-endian `Float32` files. This preserves exact row-major orientation,
+supports memory-mapped reads, keeps 512² data independently inspectable, and
+leaves room for future optional resources without changing the numerical core.
+
+Schema markers explicitly state byte order, scalar type, and row order. Readers
+fail closed on unsupported encodings and reject paths or symbolic links that
+could escape a package. Velocity is deliberately absent because it is transient
+solver state rather than scene initialization data.
+
+## DD-009 — Packages authoritative, catalog disposable
+
+An actor serializes repository mutations. A save writes and validates a hidden
+sibling package, then atomically installs it on the same volume. `catalog.json`
+contains only gallery metadata and relative user-package locations; it is
+rebuilt whenever it is absent, corrupt, stale, or inconsistent with a manifest.
+No user field data exists only in the catalog.
+
+Built-in packages live in the signed app bundle and are represented as read-only
+documents. Saving one always creates a new UUID under Application Support.
+Imported packages are validated and rewritten into app-owned storage; an ID
+collision also receives a new UUID. These rules make ownership explicit without
+subclassing scene types: source and mutability are data properties shared by the
+same `SceneDocument` value type.

@@ -597,7 +597,7 @@ Suggested scenes:
 
 # Phase 4 — Scene persistence and gallery
 
-- [ ] **Phase 4 complete**
+- [x] **Phase 4 complete**
 
 ## Goal
 
@@ -605,7 +605,7 @@ Save built-in, imported, and edited scenes in a lightweight versioned format tha
 
 ### 4.1 Scene package
 
-- [ ] Define and document `.waterscene`.
+- [x] Define and document `.waterscene`.
 
 Proposed structure:
 
@@ -632,17 +632,17 @@ Specify:
 
 ### 4.2 Manifest schema
 
-- [ ] Define UUID, name, timestamps, grid/physical dimensions, initialization mode, solver parameters, resource filenames, source type, and optional description/tags.
+- [x] Define UUID, name, timestamps, grid/physical dimensions, initialization mode, solver parameters, resource filenames, source type, and optional description/tags.
 
 ### 4.3 Built-in scenes
 
-- [ ] Package built-in scenes as read-only resources and copy before user editing.
+- [x] Package built-in scenes as read-only resources and copy before user editing.
 
 Include all four grid scales and at least one coast/bay scene.
 
 ### 4.4 User storage
 
-- [ ] Store scenes atomically under Application Support.
+- [x] Store scenes atomically under Application Support.
 
 Target:
 
@@ -654,25 +654,25 @@ Use UUID directories and handle missing/corrupt files cleanly.
 
 ### 4.5 Gallery catalog
 
-- [ ] Implement a rebuildable `catalog.json` index.
+- [x] Implement a rebuildable `catalog.json` index.
 
 Store only gallery metadata and package locations. Scene packages remain authoritative.
 
 ### 4.6 Import
 
-- [ ] Implement validated `.waterscene` import, copying, collision handling, gallery insertion, and readable errors.
+- [x] Implement validated `.waterscene` import, copying, collision handling, gallery insertion, and readable errors.
 
 Plain matrix/CSV import is deferred until package import works.
 
 ### 4.7 Save and duplicate
 
-- [ ] Implement save, duplicate/Save As, restore, dirty-state warning, and preview generation.
+- [x] Implement save, duplicate/Save As, restore, dirty-state warning, and preview generation.
 
 Built-in resources are never modified in place.
 
 ### 4.8 Persistence tests
 
-- [ ] Test field/manifest round trips, non-square orientation, corruption, unsupported schema, atomic save, catalog rebuild, and copy-on-edit.
+- [x] Test field/manifest round trips, non-square orientation, corruption, unsupported schema, atomic save, catalog rebuild, and copy-on-edit.
 
 ## Phase 4 acceptance criteria
 

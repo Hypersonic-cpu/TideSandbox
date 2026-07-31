@@ -2,6 +2,10 @@ import SwiftUI
 
 struct MainWindowView: View {
     @StateObject private var model = SimulationViewModel()
+    @StateObject private var library = SceneLibrary()
+    @State private var isGalleryPresented = false
+    @State private var isSaveAsPresented = false
+    @State private var saveAsName = ""
 
     var body: some View {
         HStack(spacing: 0) {
@@ -11,11 +15,55 @@ struct MainWindowView: View {
                     .padding(14)
             }
             Divider()
-            InspectorView(model: model)
+            InspectorView(
+                model: model,
+                library: library,
+                showGallery: { isGalleryPresented = true },
+                save: saveCurrentScene,
+                saveAs: presentSaveAs,
+                restore: model.requestRestoreScene
+            )
                 .frame(width: 300)
         }
         .frame(minWidth: 980, minHeight: 680)
         .background(Color(nsColor: .windowBackgroundColor))
+        .sheet(isPresented: $isGalleryPresented) {
+            SceneGalleryView(library: library, model: model)
+        }
+        .alert("Save Scene As", isPresented: $isSaveAsPresented) {
+            TextField("Scene name", text: $saveAsName)
+            Button("Cancel", role: .cancel) {}
+            Button("Save") {
+                let name = saveAsName
+                Task { _ = await library.save(model: model, name: name, duplicate: true) }
+            }
+        } message: {
+            Text("Create a separate editable scene package.")
+        }
+        .alert(
+            "Scene Error",
+            isPresented: Binding(
+                get: { library.errorMessage != nil && !isGalleryPresented },
+                set: { if !$0 { library.errorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { library.errorMessage = nil }
+        } message: {
+            Text(library.errorMessage ?? "Unknown scene error")
+        }
+        .confirmationDialog(
+            "Discard unsaved changes?",
+            isPresented: Binding(
+                get: { model.isDiscardWarningPresented },
+                set: { if !$0 { model.cancelDiscardChanges() } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Discard Changes", role: .destructive, action: model.confirmDiscardChanges)
+            Button("Cancel", role: .cancel, action: model.cancelDiscardChanges)
+        } message: {
+            Text("The current terrain, water state, or solver changes have not been saved.")
+        }
     }
 
     private var simulationToolbar: some View {
@@ -37,6 +85,13 @@ struct MainWindowView: View {
             }
             .accessibilityIdentifier("reset-button")
             .help("Restore the scene's initial state")
+            Button {
+                isGalleryPresented = true
+            } label: {
+                Label("Gallery", systemImage: "square.grid.2x2")
+            }
+            .accessibilityIdentifier("gallery-button")
+            .help("Open the scene gallery")
             Divider().frame(height: 20)
             Picker("Tool", selection: $model.tool) {
                 ForEach(TerrainTool.allCases) { tool in
@@ -55,10 +110,25 @@ struct MainWindowView: View {
         .overlay(Capsule().stroke(.white.opacity(0.2), lineWidth: 0.5))
         .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
     }
+
+    private func saveCurrentScene() {
+        let name = model.currentSceneName
+        Task { _ = await library.save(model: model, name: name, duplicate: false) }
+    }
+
+    private func presentSaveAs() {
+        saveAsName = "\(model.currentSceneName) Copy"
+        isSaveAsPresented = true
+    }
 }
 
 private struct InspectorView: View {
     @ObservedObject var model: SimulationViewModel
+    @ObservedObject var library: SceneLibrary
+    let showGallery: () -> Void
+    let save: () -> Void
+    let saveAs: () -> Void
+    let restore: () -> Void
 
     var body: some View {
         ScrollView {
@@ -76,15 +146,40 @@ private struct InspectorView: View {
 
     private var sceneSection: some View {
         InspectorSection(title: "Scene", systemImage: "map") {
+            HStack {
+                Text(model.currentSceneName)
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
+                Spacer()
+                if model.isDirty {
+                    Label("Unsaved", systemImage: "circle.fill")
+                        .labelStyle(.iconOnly)
+                        .font(.system(size: 7))
+                        .foregroundStyle(.orange)
+                        .help("Unsaved changes")
+                }
+            }
             Picker("Preset", selection: $model.selectedPreset) {
                 ForEach(SimulationPreset.allCases) { preset in
                     Text(preset.title).tag(preset)
                 }
             }
             .accessibilityIdentifier("preset-picker")
-            Button("Load preset", action: model.loadSelectedPreset)
+            Button("Load preset", action: model.requestLoadSelectedPreset)
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .accessibilityIdentifier("load-preset-button")
+            HStack {
+                Button("Gallery…", action: showGallery)
+                Spacer()
+                Button("Restore", action: restore)
+                    .disabled(model.currentScene == nil)
+                Menu("Save") {
+                    Button("Save", action: save)
+                    Button("Save As…", action: saveAs)
+                }
+                .disabled(model.snapshot.width == 0 || library.isBusy)
+                .accessibilityIdentifier("save-scene-menu")
+            }
         }
     }
 
