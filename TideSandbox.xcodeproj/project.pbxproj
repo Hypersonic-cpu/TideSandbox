@@ -8,7 +8,9 @@
 
 /* Begin PBXBuildFile section */
 		FC08B58A301CFBC000792786 /* SWE_WeakNonLinear_Math.md in Resources */ = {isa = PBXBuildFile; fileRef = FC08B589301CFBC000792786 /* SWE_WeakNonLinear_Math.md */; };
-		FC08B58C301D000000792786 /* BuiltInScenes in Resources */ = {isa = PBXBuildFile; fileRef = FC08B58B301D000000792786 /* BuiltInScenes */; };
+		FC08B58C301D000000792786 /* Resources/BuiltInScenes in Resources */ = {isa = PBXBuildFile; fileRef = FC08B58B301D000000792786 /* Resources/BuiltInScenes */; };
+		FC08B879301D429100792786 /* RENDER_3D_PLAN.md in Resources */ = {isa = PBXBuildFile; fileRef = FC08B878301D429100792786 /* RENDER_3D_PLAN.md */; };
+		FC08B87B301D42A400792786 /* TERRAIN_MODIFY_PLAN.md in Resources */ = {isa = PBXBuildFile; fileRef = FC08B87A301D42A400792786 /* TERRAIN_MODIFY_PLAN.md */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -34,7 +36,9 @@
 		FC08B574301CEEC800792786 /* TideSandboxUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TideSandboxUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		FC08B588301CFB3500792786 /* SWE_2D_PLAN.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = SWE_2D_PLAN.md; sourceTree = "<group>"; };
 		FC08B589301CFBC000792786 /* SWE_WeakNonLinear_Math.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = SWE_WeakNonLinear_Math.md; sourceTree = "<group>"; };
-		FC08B58B301D000000792786 /* BuiltInScenes */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Resources/BuiltInScenes; sourceTree = "<group>"; };
+		FC08B58B301D000000792786 /* Resources/BuiltInScenes */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Resources/BuiltInScenes; sourceTree = "<group>"; };
+		FC08B878301D429100792786 /* RENDER_3D_PLAN.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = RENDER_3D_PLAN.md; sourceTree = "<group>"; };
+		FC08B87A301D42A400792786 /* TERRAIN_MODIFY_PLAN.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = TERRAIN_MODIFY_PLAN.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -97,7 +101,7 @@
 			isa = PBXGroup;
 			children = (
 				FC08B587301CEF1E00792786 /* Docs */,
-				FC08B58B301D000000792786 /* BuiltInScenes */,
+				FC08B58B301D000000792786 /* Resources/BuiltInScenes */,
 				FC08B55F301CEEC600792786 /* TideSandbox */,
 				FC08B56D301CEEC800792786 /* TideSandboxTests */,
 				FC08B577301CEEC800792786 /* TideSandboxUITests */,
@@ -118,6 +122,8 @@
 		FC08B587301CEF1E00792786 /* Docs */ = {
 			isa = PBXGroup;
 			children = (
+				FC08B87A301D42A400792786 /* TERRAIN_MODIFY_PLAN.md */,
+				FC08B878301D429100792786 /* RENDER_3D_PLAN.md */,
 				FC08B589301CFBC000792786 /* SWE_WeakNonLinear_Math.md */,
 				FC08B588301CFB3500792786 /* SWE_2D_PLAN.md */,
 			);
@@ -244,8 +250,10 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				FC08B879301D429100792786 /* RENDER_3D_PLAN.md in Resources */,
 				FC08B58A301CFBC000792786 /* SWE_WeakNonLinear_Math.md in Resources */,
-				FC08B58C301D000000792786 /* BuiltInScenes in Resources */,
+				FC08B58C301D000000792786 /* Resources/BuiltInScenes in Resources */,
+				FC08B87B301D42A400792786 /* TERRAIN_MODIFY_PLAN.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
