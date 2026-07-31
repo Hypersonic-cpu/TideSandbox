@@ -688,7 +688,7 @@ Built-in resources are never modified in place.
 
 # Phase 5 — Profiling and future optimization
 
-- [ ] **Phase 5 complete**
+- [x] **Phase 5 complete**
 
 ## Goal
 
@@ -696,7 +696,7 @@ Measure the CPU implementation, improve verified bottlenecks, generalize display
 
 ### 5.1 Baseline profiling
 
-- [ ] Benchmark the CPU solver and renderer at `16×16`, `32×32`, `128×128`, and `512×512`.
+- [x] Benchmark the CPU solver and renderer at `16×16`, `32×32`, `128×128`, and `512×512`.
 
 Record results in `Docs/BenchmarkLog.md`:
 
@@ -711,7 +711,7 @@ Record results in `Docs/BenchmarkLog.md`:
 
 ### 5.2 CPU optimization
 
-- [ ] Optimize only measured bottlenecks while preserving numerical tests.
+- [x] Optimize only measured bottlenecks while preserving numerical tests.
 
 Possible work:
 
@@ -726,7 +726,7 @@ Keep direct loops and avoid abstraction that hides memory access.
 
 ### 5.3 Renderer scaling
 
-- [ ] Add display-resolution policies while preserving exact mosaic mode.
+- [x] Add display-resolution policies while preserving exact mosaic mode.
 
 Future policies:
 
@@ -739,7 +739,7 @@ Interpolation is visualization-only and never feeds back into the Engine.
 
 ### 5.4 Snapshot optimization
 
-- [ ] Reduce snapshot overhead without exposing mutable Engine state.
+- [x] Reduce snapshot overhead without exposing mutable Engine state.
 
 Possible steps:
 
@@ -750,7 +750,7 @@ Possible steps:
 
 ### 5.5 Metal preparation
 
-- [ ] Document the CPU pass graph, layouts, and golden outputs for a future Metal backend.
+- [x] Document the CPU pass graph, layouts, and golden outputs for a future Metal backend.
 
 Requirements:
 
@@ -761,7 +761,7 @@ Requirements:
 
 ### 5.6 Future 3D preparation
 
-- [ ] Preserve the data required by a later 3D renderer.
+- [x] Preserve the data required by a later 3D renderer.
 
 Required data:
 

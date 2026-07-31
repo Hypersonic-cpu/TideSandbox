@@ -2,11 +2,47 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <utility>
 
 namespace tide::swe {
+
+namespace {
+
+using ProfileClock = std::chrono::steady_clock;
+
+class ScopedProfileTimer final {
+public:
+    ScopedProfileTimer(const bool enabled, double& destination) noexcept
+        : enabled_(enabled), destination_(destination), start_(enabled ? ProfileClock::now()
+                                                                    : ProfileClock::time_point{}) {}
+
+    ~ScopedProfileTimer() {
+        if (enabled_) {
+            destination_ += std::chrono::duration<double>(ProfileClock::now() - start_).count();
+        }
+    }
+
+private:
+    const bool enabled_;
+    double& destination_;
+    const ProfileClock::time_point start_;
+};
+
+[[nodiscard]] ProfileClock::time_point profileStart(const bool enabled) noexcept {
+    return enabled ? ProfileClock::now() : ProfileClock::time_point{};
+}
+
+void profileFinish(const bool enabled, double& destination,
+                   const ProfileClock::time_point start) noexcept {
+    if (enabled) {
+        destination += std::chrono::duration<double>(ProfileClock::now() - start).count();
+    }
+}
+
+} // namespace
 
 bool SolverConfiguration::isValid() const noexcept {
     return std::isfinite(gravity) && gravity > 0.0 &&
@@ -41,6 +77,8 @@ bool WeakNonlinearSolver::setConfiguration(SolverConfiguration configuration) no
 }
 
 double WeakNonlinearSolver::stableTimeStep() noexcept {
+    const ScopedProfileTimer profileTimer(configuration_.collectPerformanceCounters,
+                                          performanceCounters_.stableTimeStepSeconds);
     if (!configuration_.isValid() || !state_.isInitialized()) {
         diagnostics_.status = StepStatus::invalidConfiguration;
         return 0.0;
@@ -157,13 +195,26 @@ void WeakNonlinearSolver::resetDiagnostics() noexcept {
     diagnostics_ = {};
 }
 
+std::size_t WeakNonlinearSolver::estimatedFieldStorageBytes() const noexcept {
+    const auto width = state_.geometry_.width;
+    const auto height = state_.geometry_.height;
+    const auto cellValues = width * height;
+    const auto xFaceValues = (width + 1) * height;
+    const auto yFaceValues = width * (height + 1);
+    return (7 * cellValues + 2 * xFaceValues + 2 * yFaceValues) * sizeof(double);
+}
+
 StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
+    const ScopedProfileTimer totalTimer(configuration_.collectPerformanceCounters,
+                                        performanceCounters_.totalSubstepSeconds);
+    performanceCounters_.profiledSubsteps += configuration_.collectPerformanceCounters ? 1 : 0;
     assert(timeStep > 0.0 && std::isfinite(timeStep));
     const auto width = state_.geometry_.width;
     const auto height = state_.geometry_.height;
     const auto inverseDx = 1.0 / state_.geometry_.dx();
     const auto inverseDy = 1.0 / state_.geometry_.dy();
 
+    const auto surfaceStart = profileStart(configuration_.collectPerformanceCounters);
     forRows(height, width * height, [this, width](std::size_t begin, std::size_t end) noexcept {
         for (auto row = begin; row < end; ++row) {
             for (std::size_t column = 0; column < width; ++column) {
@@ -172,7 +223,10 @@ StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
             }
         }
     });
+    profileFinish(configuration_.collectPerformanceCounters,
+                  performanceCounters_.surfaceSeconds, surfaceStart);
 
+    const auto pressureStart = profileStart(configuration_.collectPerformanceCounters);
     const auto velocityFactor = configuration_.gravity * timeStep * inverseDx;
     forRows(height, (width - 1) * height,
             [this, width, velocityFactor](std::size_t begin, std::size_t end) noexcept {
@@ -219,7 +273,10 @@ StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
             }
         }
     });
+    profileFinish(configuration_.collectPerformanceCounters,
+                  performanceCounters_.pressureSeconds, pressureStart);
 
+    const auto dampingStart = profileStart(configuration_.collectPerformanceCounters);
     const auto damping = std::exp(-configuration_.linearDamping * timeStep);
     forRows(height, state_.velX_.size(), [this, width, damping](std::size_t begin,
                                                                std::size_t end) noexcept {
@@ -240,20 +297,20 @@ StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
             }
         }
     });
+    profileFinish(configuration_.collectPerformanceCounters,
+                  performanceCounters_.dampingSeconds, dampingStart);
 
+    const auto fluxStart = profileStart(configuration_.collectPerformanceCounters);
     forRows(height, fluxX_.size(), [this, width](std::size_t begin,
                                                         std::size_t end) noexcept {
         for (auto row = begin; row < end; ++row) {
-            upwindDepthX_(0, row) = 0.0;
             fluxX_(0, row) = 0.0;
             for (std::size_t face = 1; face < width; ++face) {
                 const auto velocity = state_.velX_(face, row);
                 const auto depth = velocity >= 0.0 ? state_.waterDepth_(face - 1, row)
                                                    : state_.waterDepth_(face, row);
-                upwindDepthX_(face, row) = depth;
                 fluxX_(face, row) = depth * velocity;
             }
-            upwindDepthX_(width, row) = 0.0;
             fluxX_(width, row) = 0.0;
         }
     });
@@ -262,19 +319,20 @@ StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
         for (auto row = begin; row < end; ++row) {
             for (std::size_t column = 0; column < width; ++column) {
                 if (row == 0 || row == height) {
-                    upwindDepthY_(column, row) = 0.0;
                     fluxY_(column, row) = 0.0;
                     continue;
                 }
                 const auto velocity = state_.velY_(column, row);
                 const auto depth = velocity >= 0.0 ? state_.waterDepth_(column, row - 1)
                                                    : state_.waterDepth_(column, row);
-                upwindDepthY_(column, row) = depth;
                 fluxY_(column, row) = depth * velocity;
             }
         }
     });
+    profileFinish(configuration_.collectPerformanceCounters,
+                  performanceCounters_.fluxSeconds, fluxStart);
 
+    const auto limiterScaleStart = profileStart(configuration_.collectPerformanceCounters);
     forRows(height, width * height,
             [this, width, timeStep, inverseDx, inverseDy](std::size_t begin,
                                                           std::size_t end) noexcept {
@@ -292,7 +350,10 @@ StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
             }
         }
     });
+    profileFinish(configuration_.collectPerformanceCounters,
+                  performanceCounters_.limiterScaleSeconds, limiterScaleStart);
 
+    const auto fluxLimitStart = profileStart(configuration_.collectPerformanceCounters);
     forRows(height, (width - 1) * height,
             [this, width](std::size_t begin, std::size_t end) noexcept {
         for (auto row = begin; row < end; ++row) {
@@ -313,7 +374,10 @@ StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
             }
         }
     });
+    profileFinish(configuration_.collectPerformanceCounters,
+                  performanceCounters_.fluxLimitSeconds, fluxLimitStart);
 
+    const auto continuityStart = profileStart(configuration_.collectPerformanceCounters);
     forRows(height, width * height,
             [this, width, timeStep, inverseDx, inverseDy](std::size_t begin,
                                                           std::size_t end) noexcept {
@@ -327,7 +391,10 @@ StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
             }
         }
     });
+    profileFinish(configuration_.collectPerformanceCounters,
+                  performanceCounters_.continuitySeconds, continuityStart);
 
+    const auto cleanupStart = profileStart(configuration_.collectPerformanceCounters);
     // Cleanup is deliberately serial: corrections are rare and the aggregate remains exact.
     const auto cellArea = state_.geometry_.dx() * state_.geometry_.dy();
     for (auto& depth : nextWaterDepth_.values()) {
@@ -340,7 +407,10 @@ StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
         }
     }
     state_.waterDepth_.swapValues(nextWaterDepth_);
+    profileFinish(configuration_.collectPerformanceCounters,
+                  performanceCounters_.cleanupSeconds, cleanupStart);
 
+    const auto dryVelocityStart = profileStart(configuration_.collectPerformanceCounters);
     forRows(height, (width - 1) * height,
             [this, width](std::size_t begin, std::size_t end) noexcept {
         for (auto row = begin; row < end; ++row) {
@@ -367,11 +437,16 @@ StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
             }
         }
     });
+    profileFinish(configuration_.collectPerformanceCounters,
+                  performanceCounters_.dryVelocitySeconds, dryVelocityStart);
 
     state_.time_ += timeStep;
+    const auto validationStart = profileStart(configuration_.collectPerformanceCounters);
     const auto status = inspectFiniteState();
     diagnostics_.status = status;
     diagnostics_.finite = status != StepStatus::nonFiniteState;
+    profileFinish(configuration_.collectPerformanceCounters,
+                  performanceCounters_.validationSeconds, validationStart);
     assert(status == StepStatus::success && "invalid numerical state after solver substep");
     return status;
 }
@@ -404,6 +479,8 @@ StepStatus WeakNonlinearSolver::inspectFiniteState() noexcept {
 }
 
 void WeakNonlinearSolver::updateDiagnostics(StepStatus status) noexcept {
+    const ScopedProfileTimer profileTimer(configuration_.collectPerformanceCounters,
+                                          performanceCounters_.diagnosticsSeconds);
     diagnostics_.status = status;
     diagnostics_.finite = status != StepStatus::nonFiniteState;
     diagnostics_.simulatedTime = state_.time_;
@@ -438,8 +515,6 @@ void WeakNonlinearSolver::resizeScratch() {
     surfaceElevation_.resize(width, height);
     nextWaterDepth_.resize(width, height);
     outgoingScale_.resize(width, height, 1.0);
-    upwindDepthX_.resize(width + 1, height);
-    upwindDepthY_.resize(width, height + 1);
     fluxX_.resize(width + 1, height);
     fluxY_.resize(width, height + 1);
 }

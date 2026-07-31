@@ -4,8 +4,8 @@
 
 The CPU Engine stores cell-centered water depth and face-centered velocity. It
 does not store momentum and does not implement velocity advection. Free-surface
-elevation, upwind depths, outgoing limiter scales, and face fluxes are reusable
-scratch fields. This keeps the implementation aligned with
+elevation, outgoing limiter scales, and face fluxes are reusable scratch fields;
+upwind donor depth is consumed directly while constructing each flux. This keeps the implementation aligned with
 `SWE_WeakNonLinear_Math.md` and separate from a future full conservative SWE.
 
 ## DD-002 — Concrete fields and shared velocity type
@@ -91,3 +91,22 @@ Imported packages are validated and rewritten into app-owned storage; an ID
 collision also receives a new UUID. These rules make ownership explicit without
 subclassing scene types: source and mutability are data properties shared by the
 same `SceneDocument` value type.
+
+## DD-010 — Opt-in profiling and measured buffer removal
+
+Performance counters are disabled by default and use direct steady-clock timing
+around the existing pass boundaries when enabled. Baselines showed that unused
+upwind-depth face writes and multi-copy snapshot conversion were material at
+512². Removing those arrays does not change any arithmetic consumed by a later
+pass. Snapshot buffers are still wholly detached from Engine state, but ownership
+is transferred to immutable `NSData` instead of copied a second time.
+
+## DD-011 — Renderer-owned sampling policies
+
+Exact mosaic mode remains one raster pixel per simulation cell. Nearest-cell and
+bilinear-scalar policies sample at destination pixel centers; area-average uses
+exact source/destination overlap weights and only downsamples. Every policy
+starts from a copied scalar snapshot, performs the sole bottom-up to top-down row
+conversion, and produces a non-interpolated `CGImage`. These value policies use
+one enum rather than a class hierarchy because they are closed, stateless
+algorithms with no substitutable object lifecycle.

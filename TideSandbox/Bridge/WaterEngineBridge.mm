@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <memory>
 #include <span>
@@ -51,12 +52,36 @@ struct BridgeImplementation final {
     return mode == WSPolygonModeSet ? PolygonMode::set : PolygonMode::add;
 }
 
-[[nodiscard]] NSData *floatData(std::span<const double> values) {
-    std::vector<float> converted(values.size());
-    std::transform(values.begin(), values.end(), converted.begin(),
-                   [](const double value) { return static_cast<float>(value); });
-    return [NSData dataWithBytes:converted.data() length:converted.size() * sizeof(float)];
-}
+struct FreeDeleter final {
+    void operator()(void *pointer) const noexcept { std::free(pointer); }
+};
+
+template <typename Value>
+class OwnedSnapshotBuffer final {
+public:
+    explicit OwnedSnapshotBuffer(const std::size_t count)
+        : bytes_(static_cast<Value *>(std::malloc(count * sizeof(Value)))), count_(count) {
+        if (bytes_ == nullptr && count_ != 0) {
+            std::abort();
+        }
+    }
+
+    OwnedSnapshotBuffer(const OwnedSnapshotBuffer&) = delete;
+    OwnedSnapshotBuffer& operator=(const OwnedSnapshotBuffer&) = delete;
+
+    [[nodiscard]] std::span<Value> values() noexcept { return {bytes_.get(), count_}; }
+
+    [[nodiscard]] NSData *consumeAsData() noexcept {
+        void * const storage = bytes_.release();
+        return [NSData dataWithBytesNoCopy:storage
+                                    length:count_ * sizeof(Value)
+                              freeWhenDone:YES];
+    }
+
+private:
+    std::unique_ptr<Value, FreeDeleter> bytes_;
+    const std::size_t count_;
+};
 
 [[nodiscard]] std::vector<double> doubleValues(NSData *data, const std::size_t count) {
     if (data.length != count * sizeof(float)) {
@@ -200,24 +225,35 @@ struct BridgeImplementation final {
     const auto& state = impl.state;
     const auto& geometry = state.geometry();
     const auto count = geometry.width * geometry.height;
-    std::vector<double> surface(count);
-    std::vector<double> deviation(count);
-    std::vector<double> velocityMagnitude(count);
-    std::vector<std::uint8_t> wetMask(count);
+    OwnedSnapshotBuffer<float> bedElevation(count);
+    OwnedSnapshotBuffer<float> waterDepth(count);
+    OwnedSnapshotBuffer<float> surfaceElevation(count);
+    OwnedSnapshotBuffer<float> surfaceDeviation(count);
+    OwnedSnapshotBuffer<float> velocityMagnitude(count);
+    OwnedSnapshotBuffer<std::uint8_t> wetMask(count);
+    const auto bedValues = bedElevation.values();
+    const auto depthValues = waterDepth.values();
+    const auto surfaceValues = surfaceElevation.values();
+    const auto deviationValues = surfaceDeviation.values();
+    const auto velocityValues = velocityMagnitude.values();
+    const auto wetValues = wetMask.values();
     for (std::size_t row = 0; row < geometry.height; ++row) {
         for (std::size_t column = 0; column < geometry.width; ++column) {
             const auto index = row * geometry.width + column;
-            const auto surfaceValue = state.bedElevation()(column, row) +
-                                      state.waterDepth()(column, row);
+            const auto bedValue = state.bedElevation()(column, row);
+            const auto depthValue = state.waterDepth()(column, row);
+            const auto surfaceValue = bedValue + depthValue;
             const auto velocityX = 0.5 * (state.velX()(column, row) +
                                           state.velX()(column + 1, row));
             const auto velocityY = 0.5 * (state.velY()(column, row) +
                                           state.velY()(column, row + 1));
-            surface[index] = surfaceValue;
-            deviation[index] = surfaceValue - impl.referenceSurface[index];
-            velocityMagnitude[index] = std::hypot(velocityX, velocityY);
-            wetMask[index] = state.waterDepth()(column, row) >
-                             impl.configuration.minimumWetDepth ? 1 : 0;
+            bedValues[index] = static_cast<float>(bedValue);
+            depthValues[index] = static_cast<float>(depthValue);
+            surfaceValues[index] = static_cast<float>(surfaceValue);
+            deviationValues[index] = static_cast<float>(
+                surfaceValue - impl.referenceSurface[index]);
+            velocityValues[index] = static_cast<float>(std::hypot(velocityX, velocityY));
+            wetValues[index] = depthValue > impl.configuration.minimumWetDepth ? 1 : 0;
         }
     }
 
@@ -243,12 +279,12 @@ struct BridgeImplementation final {
     snapshot.height = geometry.height;
     snapshot.domainWidth = geometry.domainWidth;
     snapshot.domainHeight = geometry.domainHeight;
-    snapshot.bedElevation = floatData(state.bedElevation().values());
-    snapshot.waterDepth = floatData(state.waterDepth().values());
-    snapshot.surfaceElevation = floatData(surface);
-    snapshot.surfaceDeviation = floatData(deviation);
-    snapshot.velocityMagnitude = floatData(velocityMagnitude);
-    snapshot.wetMask = [NSData dataWithBytes:wetMask.data() length:wetMask.size()];
+    snapshot.bedElevation = bedElevation.consumeAsData();
+    snapshot.waterDepth = waterDepth.consumeAsData();
+    snapshot.surfaceElevation = surfaceElevation.consumeAsData();
+    snapshot.surfaceDeviation = surfaceDeviation.consumeAsData();
+    snapshot.velocityMagnitude = velocityMagnitude.consumeAsData();
+    snapshot.wetMask = wetMask.consumeAsData();
     snapshot.diagnostics = diagnostics;
     return snapshot;
 }

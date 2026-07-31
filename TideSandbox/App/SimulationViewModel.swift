@@ -42,6 +42,7 @@ final class SimulationViewModel: ObservableObject {
     @Published var selectedPreset: SimulationPreset = .centerBump32
     @Published var displayMode: DisplayMode = .waterDepth
     @Published var palette: ColorPalette = .blueWhite
+    @Published var resolutionPolicy: DisplayResolutionPolicy = .identicalCells
     @Published var tool: TerrainTool = .inspect
     @Published var showGrid = true
     @Published var speed = 1.0

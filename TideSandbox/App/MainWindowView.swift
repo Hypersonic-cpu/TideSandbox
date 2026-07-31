@@ -198,6 +198,12 @@ private struct InspectorView: View {
                     Text(palette.title).tag(palette)
                 }
             }
+            Picker("Sampling", selection: $model.resolutionPolicy) {
+                ForEach(DisplayResolutionPolicy.allCases) { policy in
+                    Text(policy.title).tag(policy)
+                }
+            }
+            .accessibilityIdentifier("resolution-policy-picker")
             Toggle("Grid lines", isOn: $model.showGrid)
         }
     }

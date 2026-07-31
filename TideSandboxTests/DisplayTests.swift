@@ -109,6 +109,132 @@ final class DisplayTests: XCTestCase {
         XCTAssertEqual(bytes[12], 85, accuracy: 1) // Engine row 0, value 1/3.
     }
 
+    func testResolutionPoliciesMatchAnalyticalSamplingDefinitions() throws {
+        let exactInput: [Float] = [0, 1, 2, 10, 11, 12]
+        XCTAssertEqual(
+            ScalarResampler.values(
+                engineValues: exactInput,
+                width: 3,
+                height: 2,
+                outputWidth: 3,
+                outputHeight: 2,
+                policy: .identicalCells
+            ),
+            [10, 11, 12, 0, 1, 2]
+        )
+        XCTAssertNil(ScalarResampler.values(
+            engineValues: exactInput,
+            width: 3,
+            height: 2,
+            outputWidth: 6,
+            outputHeight: 4,
+            policy: .identicalCells
+        ))
+
+        let nearest = try XCTUnwrap(ScalarResampler.values(
+            engineValues: [1, 2, 3, 4],
+            width: 2,
+            height: 2,
+            outputWidth: 4,
+            outputHeight: 4,
+            policy: .nearestCell
+        ))
+        XCTAssertEqual(nearest, [
+            3, 3, 4, 4,
+            3, 3, 4, 4,
+            1, 1, 2, 2,
+            1, 1, 2, 2,
+        ])
+
+        // Samples of f(x, y) = 2x + 3y must remain exact under bilinear interpolation.
+        let planarTopDown: [Float] = [
+            0, 2, 4, 6,
+            3, 5, 7, 9,
+            6, 8, 10, 12,
+            9, 11, 13, 15,
+        ]
+        let planarEngineOrder = (0..<4).reversed().flatMap { row in
+            Array(planarTopDown[(row * 4)..<((row + 1) * 4)])
+        }
+        let bilinear = try XCTUnwrap(ScalarResampler.values(
+            engineValues: planarEngineOrder,
+            width: 4,
+            height: 4,
+            outputWidth: 2,
+            outputHeight: 2,
+            policy: .bilinearScalar
+        ))
+        XCTAssertEqual(bilinear[0], 2.5, accuracy: 8 * Float.ulpOfOne)
+        XCTAssertEqual(bilinear[1], 6.5, accuracy: 8 * Float.ulpOfOne)
+        XCTAssertEqual(bilinear[2], 8.5, accuracy: 8 * Float.ulpOfOne)
+        XCTAssertEqual(bilinear[3], 12.5, accuracy: 8 * Float.ulpOfOne)
+
+        let areaAverage = try XCTUnwrap(ScalarResampler.values(
+            engineValues: [2, 4, 6, 8, 10, 20, 30, 40],
+            width: 4,
+            height: 2,
+            outputWidth: 2,
+            outputHeight: 1,
+            policy: .areaAverage
+        ))
+        XCTAssertEqual(areaAverage, [9, 21])
+    }
+
+    func testAreaAverageConservesMeanAndSamplingNeverMutatesEngineValues() throws {
+        let input = (0..<15).map { Float($0 * $0 - 3 * $0) }
+        let original = input
+        let downsampled = try XCTUnwrap(ScalarResampler.values(
+            engineValues: input,
+            width: 5,
+            height: 3,
+            outputWidth: 3,
+            outputHeight: 2,
+            policy: .areaAverage
+        ))
+        let inputMean = input.reduce(0, +) / Float(input.count)
+        let outputMean = downsampled.reduce(0, +) / Float(downsampled.count)
+        XCTAssertEqual(outputMean, inputMean, accuracy: 32 * Float.ulpOfOne * abs(inputMean))
+        XCTAssertEqual(input, original, "display resampling must not feed back into Engine data")
+
+        let withInvalid: [Float] = [1, 2, 3, .nan]
+        let averagedInvalid = try XCTUnwrap(ScalarResampler.values(
+            engineValues: withInvalid,
+            width: 2,
+            height: 2,
+            outputWidth: 1,
+            outputHeight: 1,
+            policy: .areaAverage
+        ))
+        XCTAssertTrue(averagedInvalid[0].isNaN)
+        let bilinearInvalid = try XCTUnwrap(ScalarResampler.values(
+            engineValues: withInvalid,
+            width: 2,
+            height: 2,
+            outputWidth: 1,
+            outputHeight: 1,
+            policy: .bilinearScalar
+        ))
+        XCTAssertTrue(bilinearInvalid[0].isNaN)
+    }
+
+    func testRasterDimensionsFollowPolicyWithoutImplicitInterpolation() throws {
+        let values = (0..<32).map(Float.init)
+        for policy in DisplayResolutionPolicy.allCases {
+            let image = try XCTUnwrap(ScalarRasterizer.image(
+                engineValues: values,
+                width: 8,
+                height: 4,
+                signed: false,
+                palette: .grayscale,
+                policy: policy,
+                targetPixelSize: CGSize(width: 37, height: 23)
+            ))
+            XCTAssertEqual(image.width, policy == .nearestCell || policy == .bilinearScalar ? 37 : 8)
+            XCTAssertEqual(image.height, policy == .nearestCell || policy == .bilinearScalar ? 23 : 4)
+            XCTAssertFalse(image.shouldInterpolate)
+        }
+    }
+
     func testBrushAndPolygonPointerMappingAtAllScales() throws {
         for size in [16, 32, 128, 512] {
             let mapping = try XCTUnwrap(GridDisplayMapping(

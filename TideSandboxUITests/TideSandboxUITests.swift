@@ -74,6 +74,34 @@ final class TideSandboxUITests: XCTestCase {
     }
 
     @MainActor
+    func testEveryDisplayResolutionPolicyRendersWithoutChangingGrid() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        let picker = app.popUpButtons["resolution-policy-picker"]
+        let gridDiagnostic = app.descendants(matching: .any)["grid-diagnostic"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 8))
+        XCTAssertTrue(gridDiagnostic.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitForValue("32 × 32", identifier: "grid-diagnostic", in: app))
+
+        for title in ["Nearest cell", "Bilinear scalar", "Area average", "Identical cells"] {
+            picker.click()
+            let item = app.menuItems[title]
+            XCTAssertTrue(item.waitForExistence(timeout: 2))
+            item.click()
+            XCTAssertTrue(app.windows.firstMatch.exists)
+            XCTAssertTrue(waitForValue("32 × 32", identifier: "grid-diagnostic", in: app))
+        }
+
+        picker.click()
+        app.menuItems["Bilinear scalar"].click()
+        let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        screenshot.name = "Water Sandbox Bilinear Display Policy"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor
     func testSavedSceneSurvivesRelaunchInGallery() throws {
         let app = XCUIApplication()
         app.launchEnvironment["WATER_SANDBOX_STORAGE_NAMESPACE"] = "PersistenceRelaunch"

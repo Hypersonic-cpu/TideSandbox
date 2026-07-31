@@ -150,3 +150,46 @@ After the secondary display was disconnected, visual verification continued on
 the remaining main display as directed. The window-only gallery capture showed
 five durable scenes after relaunch, correctly oriented previews, lock badges on
 all four built-ins, an unlocked user copy, and an unclipped responsive layout.
+
+## 2026-08-01 — Phase 5 complete
+
+- Added opt-in Engine pass counters and reproducible Debug/Release benchmark
+  tools for solver, snapshot, and renderer work at 16², 32², 128², and 512².
+  Measurements use repeated batches, medians, and median absolute deviations;
+  hardware, compiler flags, worker count, memory, and every pass are recorded in
+  `BenchmarkLog.md`.
+- Optimized only measured costs. Removing write-only upwind-depth arrays reduced
+  512² Engine field storage by 15.4% and the Release four-worker end-to-end step
+  by 12.1%. One-pass ownership-transferred snapshot buffers reduced publication
+  cost by 58.5% while remaining detached from mutable Engine state.
+- Added exact, nearest-cell, bilinear-scalar, and exact-overlap area-average
+  display policies. Exact mode remains one raster pixel per Engine cell;
+  area-average only downsamples. Analytical tests verify planar bilinear values,
+  global-mean preservation, invalid propagation, row orientation, dimensions,
+  and that rendering never mutates simulation values.
+- Documented the CPU reference layout and dependency graph in `CPUReference.md`.
+  A reproducible generator and XCTest lock depth and both same-typed `FaceField`
+  velocity components at non-square, 128², and 512² golden checkpoints.
+- Preserved copied bed, depth, surface, deviation, velocity magnitude, wet mask,
+  grid dimensions, and physical dimensions for a future renderer. Metal, 3D,
+  momentum storage, and full nonlinear SWE remain deliberately absent.
+
+Verification:
+
+```text
+Strict standalone C++20:      passed with warnings as errors
+Complete product XCTest:     28/28 passed
+AddressSanitizer XCTest:     28/28 passed
+Normally signed UI suite:     7/7 passed, 98.605 s
+Signed Debug app build:       passed as part of both XCTest runs
+Signed Release app build:     passed
+CPU goldens Debug/Release:    identical
+Benchmark reproduction:       Debug and Release passed
+git diff --check:              passed
+```
+
+Visual verification used the remaining main display as directed. The retained
+window-only bilinear capture showed a smooth scalar field beneath cell-aligned
+grid lines, a readable Sampling picker, and no overlap or clipping in the
+floating toolbar or inspector. Signed UI automation exercised all four policies
+without changing the 32 × 32 Engine diagnostic.

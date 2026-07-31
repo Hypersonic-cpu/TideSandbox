@@ -18,8 +18,26 @@ struct SolverConfiguration final {
     std::size_t workerCount = 0; // Zero selects the hardware concurrency.
     std::size_t serialThreshold = 4'096;
     double debugVelocityBound = 0.0; // Non-positive disables the debug bound.
+    bool collectPerformanceCounters = false;
 
     [[nodiscard]] bool isValid() const noexcept;
+};
+
+struct SolverPerformanceCounters final {
+    double stableTimeStepSeconds = 0.0;
+    double surfaceSeconds = 0.0;
+    double pressureSeconds = 0.0;
+    double dampingSeconds = 0.0;
+    double fluxSeconds = 0.0;
+    double limiterScaleSeconds = 0.0;
+    double fluxLimitSeconds = 0.0;
+    double continuitySeconds = 0.0;
+    double cleanupSeconds = 0.0;
+    double dryVelocitySeconds = 0.0;
+    double validationSeconds = 0.0;
+    double diagnosticsSeconds = 0.0;
+    double totalSubstepSeconds = 0.0;
+    std::size_t profiledSubsteps = 0;
 };
 
 class WeakNonlinearSolver final {
@@ -33,7 +51,11 @@ public:
         return configuration_;
     }
     [[nodiscard]] const Diagnostics& diagnostics() const noexcept { return diagnostics_; }
+    [[nodiscard]] const SolverPerformanceCounters& performanceCounters() const noexcept {
+        return performanceCounters_;
+    }
     [[nodiscard]] std::size_t workerCount() const noexcept { return parallelFor_.workerCount(); }
+    [[nodiscard]] std::size_t estimatedFieldStorageBytes() const noexcept;
 
     // A worker-count change requires constructing a new solver so its persistent pool is explicit.
     [[nodiscard]] bool setConfiguration(SolverConfiguration configuration) noexcept;
@@ -41,6 +63,7 @@ public:
     [[nodiscard]] StepStatus stepOnce(double timeStep) noexcept;
     [[nodiscard]] StepStatus advance(double frameDeltaTime) noexcept;
     void resetDiagnostics() noexcept;
+    void resetPerformanceCounters() noexcept { performanceCounters_ = {}; }
 
 private:
     template <typename Function>
@@ -63,11 +86,10 @@ private:
     CellField surfaceElevation_;
     CellField nextWaterDepth_;
     CellField outgoingScale_;
-    FaceField upwindDepthX_;
-    FaceField upwindDepthY_;
     FaceField fluxX_;
     FaceField fluxY_;
     Diagnostics diagnostics_;
+    SolverPerformanceCounters performanceCounters_;
 };
 
 } // namespace tide::swe

@@ -6,8 +6,10 @@
 #include "../TideSandbox/Engine/WeakNonlinearSolver.hh"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <span>
 #include <vector>
@@ -91,6 +93,39 @@ namespace {
     const double scale = std::max(volume(state), 1.0);
     const double operationCount = static_cast<double>(state.waterDepth().size());
     return 64.0 * std::numeric_limits<double>::epsilon() * operationCount * scale;
+}
+
+[[nodiscard]] std::uint64_t fingerprint(const std::span<const double> values) noexcept {
+    std::uint64_t hash = 1'469'598'103'934'665'603ULL;
+    for (const double value : values) {
+        const std::uint64_t bits = std::bit_cast<std::uint64_t>(value);
+        for (unsigned int byte = 0; byte < 8; ++byte) {
+            hash ^= (bits >> (byte * 8U)) & 0xFFU;
+            hash *= 1'099'511'628'211ULL;
+        }
+    }
+    return hash;
+}
+
+[[nodiscard]] SimulationState makeGoldenState(const std::size_t width,
+                                              const std::size_t height) {
+    const GridGeometry geometry{width, height, static_cast<double>(width),
+                                static_cast<double>(height)};
+    std::vector<double> bed(width * height);
+    std::vector<double> depth(width * height);
+    for (std::size_t row = 0; row < height; ++row) {
+        for (std::size_t column = 0; column < width; ++column) {
+            const std::size_t index = row * width + column;
+            const auto pattern = static_cast<std::int64_t>((17 * column + 13 * row) % 11) - 5;
+            bed[index] = static_cast<double>(pattern) * 0.01;
+            depth[index] = 2.0 - bed[index];
+        }
+    }
+    depth[(height / 2) * width + width / 2] += 0.125;
+    SimulationState state;
+    const bool initialized = state.initializeDepth(geometry, bed, depth);
+    assert(initialized);
+    return state;
 }
 
 } // namespace
@@ -229,6 +264,72 @@ namespace {
     SimulationState cappedState = makeState(32, 32, 0.25);
     WeakNonlinearSolver capped(cappedState, cappedConfiguration);
     XCTAssertEqual(capped.advance(1.0), StepStatus::substepLimitReached);
+}
+
+- (void)testPerformanceCountersPartitionOneSubstepAndReportStorage {
+    SimulationState state = makeUnevenPerturbation(128);
+    SolverConfiguration configuration;
+    configuration.workerCount = 4;
+    configuration.collectPerformanceCounters = true;
+    WeakNonlinearSolver solver(state, configuration);
+    solver.resetPerformanceCounters();
+
+    XCTAssertEqual(solver.stepOnce(0.001), StepStatus::success);
+    const auto& counters = solver.performanceCounters();
+    XCTAssertEqual(counters.profiledSubsteps, 1UL);
+    XCTAssertGreaterThan(counters.totalSubstepSeconds, 0.0);
+    XCTAssertGreaterThanOrEqual(counters.stableTimeStepSeconds, 0.0);
+    XCTAssertGreaterThanOrEqual(counters.diagnosticsSeconds, 0.0);
+    const double partitionedSeconds = counters.surfaceSeconds + counters.pressureSeconds +
+        counters.dampingSeconds + counters.fluxSeconds + counters.limiterScaleSeconds +
+        counters.fluxLimitSeconds + counters.continuitySeconds + counters.cleanupSeconds +
+        counters.dryVelocitySeconds + counters.validationSeconds;
+    XCTAssertLessThanOrEqual(partitionedSeconds, counters.totalSubstepSeconds);
+
+    const std::size_t size = 128;
+    const std::size_t cellValues = size * size;
+    const std::size_t xFaceValues = (size + 1) * size;
+    const std::size_t yFaceValues = size * (size + 1);
+    const std::size_t expectedBytes =
+        (7 * cellValues + 2 * xFaceValues + 2 * yFaceValues) * sizeof(double);
+    XCTAssertEqual(solver.estimatedFieldStorageBytes(), expectedBytes);
+
+    solver.resetPerformanceCounters();
+    XCTAssertEqual(solver.performanceCounters().profiledSubsteps, 0UL);
+    XCTAssertEqual(solver.performanceCounters().totalSubstepSeconds, 0.0);
+}
+
+- (void)testCPUGoldenFingerprintsForFutureBackendComparison {
+    struct GoldenCase final {
+        std::size_t width;
+        std::size_t height;
+        std::size_t steps;
+        std::uint64_t depth;
+        std::uint64_t velX;
+        std::uint64_t velY;
+    };
+    constexpr GoldenCase cases[] = {
+        {16, 9, 25, 0xe53d405add0eb75cULL, 0xeea22af86fbc9f4cULL,
+         0x6b4c01398899b87aULL},
+        {128, 128, 25, 0x911c89d32db6e6e9ULL, 0xce31bca6c26caf5cULL,
+         0xe08f64226e564d90ULL},
+        {512, 512, 5, 0xa9cd1b27cfc8bc8cULL, 0x642e24b4a604f6d6ULL,
+         0xdd8244fff5566ce2ULL},
+    };
+    for (const auto& golden : cases) {
+        SimulationState state = makeGoldenState(golden.width, golden.height);
+        SolverConfiguration configuration;
+        configuration.workerCount = 1;
+        configuration.linearDamping = 0.0;
+        configuration.minimumWetDepth = 0.0;
+        WeakNonlinearSolver solver(state, configuration);
+        for (std::size_t step = 0; step < golden.steps; ++step) {
+            XCTAssertEqual(solver.stepOnce(0.001), StepStatus::success);
+        }
+        XCTAssertEqual(fingerprint(state.waterDepth().values()), golden.depth);
+        XCTAssertEqual(fingerprint(state.velX().values()), golden.velX);
+        XCTAssertEqual(fingerprint(state.velY().values()), golden.velY);
+    }
 }
 
 - (void)testWetDryPositivityAndDonorLimiting {
