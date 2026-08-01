@@ -12,6 +12,7 @@
 		FC08B879301D429100792786 /* RENDER_3D_PLAN.md in Resources */ = {isa = PBXBuildFile; fileRef = FC08B878301D429100792786 /* RENDER_3D_PLAN.md */; };
 		FC08B87B301D42A400792786 /* TERRAIN_MODIFY_PLAN.md in Resources */ = {isa = PBXBuildFile; fileRef = FC08B87A301D42A400792786 /* TERRAIN_MODIFY_PLAN.md */; };
 		FC08B881301DC9D800792786 /* SWE_GPU_ACCEL_PLAN.md in Resources */ = {isa = PBXBuildFile; fileRef = FC08B880301DC9CD00792786 /* SWE_GPU_ACCEL_PLAN.md */; };
+		FC08B883301DD00000792786 /* MetalPerformanceShadersGraph.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FC08B882301DD00000792786 /* MetalPerformanceShadersGraph.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -41,6 +42,7 @@
 		FC08B878301D429100792786 /* RENDER_3D_PLAN.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = RENDER_3D_PLAN.md; sourceTree = "<group>"; };
 		FC08B87A301D42A400792786 /* TERRAIN_MODIFY_PLAN.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = TERRAIN_MODIFY_PLAN.md; sourceTree = "<group>"; };
 		FC08B880301DC9CD00792786 /* SWE_GPU_ACCEL_PLAN.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = SWE_GPU_ACCEL_PLAN.md; sourceTree = "<group>"; };
+		FC08B882301DD00000792786 /* MetalPerformanceShadersGraph.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalPerformanceShadersGraph.framework; path = System/Library/Frameworks/MetalPerformanceShadersGraph.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -79,6 +81,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				FC08B883301DD00000792786 /* MetalPerformanceShadersGraph.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

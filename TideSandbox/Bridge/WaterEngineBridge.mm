@@ -1,8 +1,8 @@
 #import "WaterEngineBridge.hh"
 
-#include "../Engine/SimulationState.hh"
-#include "../Engine/TerrainEdit.hh"
-#include "../Engine/WeakNonlinearSolver.hh"
+#include "../Accelerated/CpuBackend.hh"
+#include "../Accelerated/MPSGraphAutomaticBackend.hh"
+#include "../Accelerated/MetalGPUBackend.hh"
 
 #include <algorithm>
 #include <cmath>
@@ -11,18 +11,27 @@
 #include <limits>
 #include <memory>
 #include <span>
+#include <string>
+#include <type_traits>
+#include <variant>
 #include <vector>
 
 using namespace tide::swe;
+using namespace tide::accelerated;
 
 namespace {
 
+using BackendStorage = std::variant<CpuBackend, MPSGraphAutomaticBackend, MetalGPUBackend>;
+
 struct BridgeImplementation final {
-    SimulationState state;
     SolverConfiguration configuration;
-    std::unique_ptr<WeakNonlinearSolver> solver;
-    std::unique_ptr<TerrainEditor> editor;
-    std::vector<double> referenceSurface;
+    BackendStorage backend;
+    RequestedSimulationBackend requestedBackend =
+        RequestedSimulationBackend::automaticAccelerated;
+    WSBackendFailureInjection failureInjection = WSBackendFailureInjectionNone;
+    std::string resolutionReason;
+    std::string fallbackReason;
+    bool requestedBackendFailed = false;
     bool running = false;
 };
 
@@ -81,6 +90,42 @@ struct BridgeImplementation final {
     return WSBoundaryTypeReflective;
 }
 
+[[nodiscard]] RequestedSimulationBackend engineRequestedBackend(
+    const WSRequestedSimulationBackend backend) noexcept {
+    switch (backend) {
+    case WSRequestedSimulationBackendAutomaticAccelerated:
+        return RequestedSimulationBackend::automaticAccelerated;
+    case WSRequestedSimulationBackendMetalGPU:
+        return RequestedSimulationBackend::metalGPU;
+    case WSRequestedSimulationBackendCPUReference:
+        return RequestedSimulationBackend::cpuReference;
+    }
+}
+
+[[nodiscard]] WSRequestedSimulationBackend bridgeRequestedBackend(
+    const RequestedSimulationBackend backend) noexcept {
+    switch (backend) {
+    case RequestedSimulationBackend::automaticAccelerated:
+        return WSRequestedSimulationBackendAutomaticAccelerated;
+    case RequestedSimulationBackend::metalGPU:
+        return WSRequestedSimulationBackendMetalGPU;
+    case RequestedSimulationBackend::cpuReference:
+        return WSRequestedSimulationBackendCPUReference;
+    }
+}
+
+[[nodiscard]] WSResolvedSimulationBackend bridgeResolvedBackend(
+    const ResolvedSimulationBackend backend) noexcept {
+    switch (backend) {
+    case ResolvedSimulationBackend::mpsGraphAutomatic:
+        return WSResolvedSimulationBackendMPSGraphAutomatic;
+    case ResolvedSimulationBackend::metalGPU:
+        return WSResolvedSimulationBackendMetalGPU;
+    case ResolvedSimulationBackend::cpuReference:
+        return WSResolvedSimulationBackendCPUReference;
+    }
+}
+
 struct FreeDeleter final {
     void operator()(void *pointer) const noexcept { std::free(pointer); }
 };
@@ -123,7 +168,50 @@ private:
     return result;
 }
 
+[[nodiscard]] bool validDimensions(const std::size_t width,
+                                   const std::size_t height) noexcept {
+    const std::size_t maximum = std::numeric_limits<std::size_t>::max();
+    return width >= 8 && height >= 8 && width != maximum && height != maximum &&
+        width <= maximum / height && width + 1 <= maximum / height &&
+        height + 1 <= maximum / width;
+}
+
 } // namespace
+
+@interface WSBackendStatus ()
+
+@property(nonatomic, readwrite) WSRequestedSimulationBackend requestedBackend;
+@property(nonatomic, readwrite) WSResolvedSimulationBackend resolvedBackend;
+@property(nonatomic, readwrite, getter=isReady) BOOL ready;
+@property(nonatomic, readwrite) NSString *resolutionReason;
+@property(nonatomic, readwrite) NSString *fallbackReason;
+@property(nonatomic, readwrite) NSString *statePrecision;
+@property(nonatomic, readwrite) double graphCompileMilliseconds;
+@property(nonatomic, readwrite) double lastStableDtMilliseconds;
+@property(nonatomic, readwrite) double lastFramePhysicsMilliseconds;
+@property(nonatomic, readwrite) double lastSubstepMilliseconds;
+@property(nonatomic, readwrite) double lastReadbackMilliseconds;
+@property(nonatomic, readwrite) NSUInteger substepCount;
+@property(nonatomic, readwrite) NSUInteger stateSizedAllocationCount;
+
+@end
+
+@implementation WSBackendStatus
+@end
+
+@interface WSAcceleratedFieldBuffers ()
+
+@property(nonatomic, readwrite) id<MTLDevice> device;
+@property(nonatomic, readwrite) id<MTLBuffer> bedElevation;
+@property(nonatomic, readwrite) id<MTLBuffer> waterDepth;
+@property(nonatomic, readwrite) NSUInteger width;
+@property(nonatomic, readwrite) NSUInteger height;
+@property(nonatomic, readwrite) uint64_t generation;
+
+@end
+
+@implementation WSAcceleratedFieldBuffers
+@end
 
 @interface WSBoundarySideConfiguration ()
 
@@ -236,6 +324,234 @@ namespace {
     return @[@(source[0]), @(source[1]), @(source[2]), @(source[3])];
 }
 
+[[nodiscard]] const BackendStatus& currentBackendStatus(
+    const BridgeImplementation& implementation) noexcept {
+    return std::visit([](const auto& backend) -> const BackendStatus& {
+        return backend.status();
+    }, implementation.backend);
+}
+
+[[nodiscard]] BackendState currentBackendState(BridgeImplementation& implementation,
+                                               std::string& failureReason) {
+    return std::visit([&failureReason](auto& backend) {
+        return backend.synchronizeToHost(failureReason);
+    }, implementation.backend);
+}
+
+[[nodiscard]] std::size_t currentAllocationCount(
+    const BridgeImplementation& implementation) noexcept {
+    return std::visit([](const auto& backend) -> std::size_t {
+        using Backend = std::decay_t<decltype(backend)>;
+        if constexpr (std::is_same_v<Backend, MetalGPUBackend> ||
+                      std::is_same_v<Backend, MPSGraphAutomaticBackend>) {
+            return backend.stateSizedAllocationCount();
+        }
+        return 0;
+    }, implementation.backend);
+}
+
+[[nodiscard]] WSAcceleratedFieldBuffers *currentFieldBuffers(
+    const BridgeImplementation& implementation) {
+    const AcceleratedFieldBufferSnapshot source = std::visit([](const auto& backend) {
+        using Backend = std::decay_t<decltype(backend)>;
+        if constexpr (std::is_same_v<Backend, MetalGPUBackend> ||
+                      std::is_same_v<Backend, MPSGraphAutomaticBackend>) {
+            return backend.fieldBufferSnapshot();
+        }
+        return AcceleratedFieldBufferSnapshot{};
+    }, implementation.backend);
+    if (source.device == nullptr || source.bedElevation == nullptr ||
+        source.waterDepth == nullptr) {
+        return nil;
+    }
+    WSAcceleratedFieldBuffers *result = [[WSAcceleratedFieldBuffers alloc] init];
+    result.device = (__bridge id<MTLDevice>)source.device;
+    result.bedElevation = (__bridge id<MTLBuffer>)source.bedElevation;
+    result.waterDepth = (__bridge id<MTLBuffer>)source.waterDepth;
+    result.width = source.width;
+    result.height = source.height;
+    result.generation = source.generation;
+    return result;
+}
+
+[[nodiscard]] std::size_t estimatedSubstepWork(const BackendState& state) noexcept {
+    const std::size_t cells = state.geometry.width * state.geometry.height;
+    const std::size_t faces = (state.geometry.width + 1) * state.geometry.height +
+                              state.geometry.width * (state.geometry.height + 1);
+    return 8 * cells + 6 * faces;
+}
+
+enum class PreferredAccelerator : std::uint8_t {
+    mpsGraphAutomatic,
+    metalGPU,
+};
+
+struct AutomaticBackendPolicy final {
+    std::size_t acceleratedWorkThreshold;
+    PreferredAccelerator preferredAccelerator;
+    const char *deviceFamily;
+};
+
+[[nodiscard]] AutomaticBackendPolicy automaticBackendPolicy() noexcept {
+    id<MTLDevice> const device = MTLCreateSystemDefaultDevice();
+    if (device != nil && [device supportsFamily:MTLGPUFamilyApple9]) {
+        // The archived M4 Release sweep brackets break-even between 128² (329,216 work)
+        // and 256² (1,313,792 work). The conservative rounded interpolation is 1,000,000.
+        // Metal was faster than MPSGraph at every accelerated sample on this family.
+        return {1'000'000, PreferredAccelerator::metalGPU, "Apple9"};
+    }
+    // Unknown families use the first sampled accelerated workload as a conservative gate and
+    // retain the capability-first MPSGraph order until family-specific measurements exist.
+    return {1'313'792, PreferredAccelerator::mpsGraphAutomatic, "generic"};
+}
+
+[[nodiscard]] bool loadCPU(BridgeImplementation& implementation,
+                           const BackendState& state,
+                           std::string& failureReason) {
+    implementation.backend.emplace<CpuBackend>();
+    return std::get<CpuBackend>(implementation.backend).load(
+        state, implementation.configuration, failureReason);
+}
+
+[[nodiscard]] bool loadMetal(BridgeImplementation& implementation,
+                             const BackendState& state,
+                             std::string& failureReason) {
+    if (implementation.failureInjection == WSBackendFailureInjectionMetalPreparation ||
+        implementation.failureInjection == WSBackendFailureInjectionAllAcceleratedPreparation) {
+        failureReason = "Injected Metal preparation failure";
+        return false;
+    }
+    implementation.backend.emplace<MetalGPUBackend>();
+    return std::get<MetalGPUBackend>(implementation.backend).load(
+        state, implementation.configuration, failureReason);
+}
+
+[[nodiscard]] bool loadMPSGraph(BridgeImplementation& implementation,
+                                const BackendState& state,
+                                std::string& failureReason) {
+    if (implementation.failureInjection == WSBackendFailureInjectionMPSGraphPreparation ||
+        implementation.failureInjection == WSBackendFailureInjectionAllAcceleratedPreparation) {
+        failureReason = "Injected MPSGraph preparation failure";
+        return false;
+    }
+    implementation.backend.emplace<MPSGraphAutomaticBackend>();
+    return std::get<MPSGraphAutomaticBackend>(implementation.backend).load(
+        state, implementation.configuration, failureReason);
+}
+
+[[nodiscard]] bool resolveBackend(BridgeImplementation& implementation,
+                                  const BackendState& state) {
+    implementation.running = false;
+    implementation.resolutionReason.clear();
+    implementation.fallbackReason.clear();
+    implementation.requestedBackendFailed = false;
+    std::string failureReason;
+    if (implementation.requestedBackend == RequestedSimulationBackend::cpuReference) {
+        const bool result = loadCPU(implementation, state, failureReason);
+        implementation.resolutionReason = result
+            ? "CPU Reference was selected explicitly."
+            : "CPU Reference could not be prepared.";
+        implementation.fallbackReason = result ? std::string{} : failureReason;
+        return result;
+    }
+    if (implementation.requestedBackend == RequestedSimulationBackend::metalGPU) {
+        if (loadMetal(implementation, state, failureReason)) {
+            implementation.resolutionReason = "Metal GPU was selected explicitly.";
+            return true;
+        }
+        implementation.resolutionReason =
+            "Forced Metal GPU preparation failed; a CPU copy is retained only for recovery.";
+        implementation.fallbackReason = failureReason;
+        implementation.requestedBackendFailed = true;
+        std::string recoveryReason;
+        (void)loadCPU(implementation, state, recoveryReason);
+        return false;
+    }
+
+    const AutomaticBackendPolicy policy = automaticBackendPolicy();
+    const std::size_t estimatedWork = estimatedSubstepWork(state);
+    if (estimatedWork < policy.acceleratedWorkThreshold) {
+        implementation.resolutionReason = "Estimated work " + std::to_string(estimatedWork) +
+            " is below the measured " + policy.deviceFamily +
+            " acceleration threshold " +
+            std::to_string(policy.acceleratedWorkThreshold) + ".";
+        return loadCPU(implementation, state, failureReason);
+    }
+
+    // MPSGraph-preparation injection deliberately exercises its compile-failure fallback even on
+    // a family whose measured production preference is Metal.
+    const bool preferMetal =
+        policy.preferredAccelerator == PreferredAccelerator::metalGPU &&
+        implementation.failureInjection != WSBackendFailureInjectionMPSGraphPreparation;
+    std::string mpsReason;
+    std::string metalReason;
+    if (preferMetal) {
+        if (loadMetal(implementation, state, metalReason)) {
+            implementation.resolutionReason = "Estimated work " +
+                std::to_string(estimatedWork) + " meets the measured " +
+                policy.deviceFamily +
+                " threshold; Metal GPU is the fastest validated backend.";
+            return true;
+        }
+        if (loadMPSGraph(implementation, state, mpsReason)) {
+            implementation.resolutionReason =
+                "Preferred Metal GPU was unavailable; Apple Automatic is ready.";
+            implementation.fallbackReason = "Metal: " + metalReason;
+            return true;
+        }
+    } else {
+        if (loadMPSGraph(implementation, state, mpsReason)) {
+            implementation.resolutionReason = "Estimated work " +
+                std::to_string(estimatedWork) + " meets the " + policy.deviceFamily +
+                " acceleration threshold; Apple Automatic is ready.";
+            return true;
+        }
+        if (loadMetal(implementation, state, metalReason)) {
+            implementation.resolutionReason =
+                "Apple Automatic was unavailable; Metal GPU is the accelerated fallback.";
+            implementation.fallbackReason = "MPSGraph: " + mpsReason;
+            return true;
+        }
+    }
+    implementation.fallbackReason = "MPSGraph: " + mpsReason + "; Metal: " + metalReason;
+    implementation.resolutionReason =
+        "Both accelerated backends were unavailable; CPU Reference is the safe fallback.";
+    std::string cpuReason;
+    return loadCPU(implementation, state, cpuReason);
+}
+
+[[nodiscard]] TerrainEditResult applyCPUBrush(BridgeImplementation& implementation,
+                                              const BrushCommand& command) {
+    implementation.running = false;
+    std::string failureReason;
+    const TerrainEditResult result = std::visit([&](auto& backend) {
+        using Backend = std::decay_t<decltype(backend)>;
+        if constexpr (std::is_same_v<Backend, CpuBackend>) {
+            return backend.applyMaterialBrush(command);
+        } else {
+            return backend.applyMaterialBrush(command, failureReason);
+        }
+    }, implementation.backend);
+    implementation.fallbackReason = failureReason;
+    return result;
+}
+
+[[nodiscard]] TerrainEditResult applyCPUPolygon(BridgeImplementation& implementation,
+                                                const PolygonCommand& command) {
+    implementation.running = false;
+    std::string failureReason;
+    const TerrainEditResult result = std::visit([&](auto& backend) {
+        using Backend = std::decay_t<decltype(backend)>;
+        if constexpr (std::is_same_v<Backend, CpuBackend>) {
+            return backend.applyMaterialPolygon(command);
+        } else {
+            return backend.applyMaterialPolygon(command, failureReason);
+        }
+    }, implementation.backend);
+    implementation.fallbackReason = failureReason;
+    return result;
+}
+
 } // namespace
 
 @interface WSTerrainEditResult ()
@@ -313,6 +629,8 @@ namespace {
 @property(nonatomic, readwrite) NSData *velocityMagnitude;
 @property(nonatomic, readwrite) NSData *wetMask;
 @property(nonatomic, readwrite) WSEngineDiagnostics *diagnostics;
+@property(nonatomic, readwrite) WSBackendStatus *backendStatus;
+@property(nonatomic, readwrite, nullable) WSAcceleratedFieldBuffers *acceleratedFieldBuffers;
 
 @end
 
@@ -327,6 +645,9 @@ namespace {
                  domainHeight:(double)domainHeight {
     self = [super init];
     if (self == nil) {
+        return nil;
+    }
+    if (!validDimensions(width, height)) {
         return nil;
     }
     _implementation = new BridgeImplementation();
@@ -353,6 +674,59 @@ namespace {
 
 - (void)setRunning:(BOOL)running {
     implementation(_implementation).running = running;
+}
+
+- (WSRequestedSimulationBackend)requestedBackend {
+    return bridgeRequestedBackend(implementation(_implementation).requestedBackend);
+}
+
+- (WSResolvedSimulationBackend)resolvedBackend {
+    return bridgeResolvedBackend(currentBackendStatus(
+        implementation(_implementation)).resolved);
+}
+
+- (WSBackendStatus *)backendStatus {
+    const auto& impl = implementation(_implementation);
+    const BackendStatus& source = currentBackendStatus(impl);
+    WSBackendStatus *result = [[WSBackendStatus alloc] init];
+    result.requestedBackend = bridgeRequestedBackend(impl.requestedBackend);
+    result.resolvedBackend = bridgeResolvedBackend(source.resolved);
+    result.ready = source.ready && !impl.requestedBackendFailed;
+    result.resolutionReason = [NSString stringWithUTF8String:
+        (impl.resolutionReason.empty() ? source.resolutionReason :
+                                        impl.resolutionReason).c_str()];
+    result.fallbackReason = [NSString stringWithUTF8String:
+        (impl.fallbackReason.empty() ? source.fallbackReason : impl.fallbackReason).c_str()];
+    result.statePrecision = [NSString stringWithUTF8String:source.statePrecision.c_str()];
+    result.graphCompileMilliseconds = source.graphCompileMilliseconds;
+    result.lastStableDtMilliseconds = source.lastStableDtMilliseconds;
+    result.lastFramePhysicsMilliseconds = source.lastFramePhysicsMilliseconds;
+    result.lastSubstepMilliseconds = source.lastSubstepMilliseconds;
+    result.lastReadbackMilliseconds = source.lastReadbackMilliseconds;
+    result.substepCount = source.substepCount;
+    result.stateSizedAllocationCount = currentAllocationCount(impl);
+    return result;
+}
+
+- (WSAcceleratedFieldBuffers *)acceleratedFieldBuffers {
+    return currentFieldBuffers(implementation(_implementation));
+}
+
+- (BOOL)setRequestedBackend:(WSRequestedSimulationBackend)backend {
+    auto& impl = implementation(_implementation);
+    impl.running = false;
+    std::string failureReason;
+    const BackendState state = currentBackendState(impl, failureReason);
+    if (!state.isValid()) {
+        impl.fallbackReason = failureReason;
+        return NO;
+    }
+    impl.requestedBackend = engineRequestedBackend(backend);
+    return resolveBackend(impl, state);
+}
+
+- (void)setBackendFailureInjection:(WSBackendFailureInjection)failure {
+    implementation(_implementation).failureInjection = failure;
 }
 
 - (BOOL)loadWidth:(NSUInteger)width
@@ -389,7 +763,7 @@ namespace {
          minimumBed:(double)minimumBed
      maximumSurface:(double)maximumSurface
          boundaries:(WSBoundaryConfiguration *)boundaries {
-    if (width < 8 || height < 8 || width > std::numeric_limits<std::size_t>::max() / height) {
+    if (!validDimensions(width, height)) {
         return NO;
     }
     const auto count = static_cast<std::size_t>(width * height);
@@ -399,94 +773,139 @@ namespace {
         return NO;
     }
 
-    auto& impl = implementation(_implementation);
     const GridGeometry geometry{static_cast<std::size_t>(width), static_cast<std::size_t>(height),
                                 domainWidth, domainHeight};
     const BoundaryConfiguration engineBoundaries = engineBoundaryConfiguration(boundaries);
-    if (!impl.state.initializeDepth(geometry, bed, depth, {minimumBed, maximumSurface},
-                                    engineBoundaries)) {
+    SimulationState initialState;
+    if (!initialState.initializeDepth(geometry, bed, depth, {minimumBed, maximumSurface},
+                                      engineBoundaries)) {
         return NO;
     }
-    impl.solver = std::make_unique<WeakNonlinearSolver>(impl.state, impl.configuration);
-    impl.editor = std::make_unique<TerrainEditor>(impl.state,
-                                                  impl.configuration.minimumWetDepth);
-    impl.referenceSurface.resize(count);
-    for (std::size_t index = 0; index < count; ++index) {
-        impl.referenceSurface[index] = bed[index] + depth[index];
-    }
+    auto& impl = implementation(_implementation);
     impl.running = false;
-    return YES;
+    return resolveBackend(impl, exportState(initialState));
 }
 
 - (WSBoundaryConfiguration *)boundaryConfiguration {
-    return bridgeBoundaryConfiguration(implementation(_implementation).state.boundaryConfiguration());
+    auto& impl = implementation(_implementation);
+    std::string failureReason;
+    const BackendState state = currentBackendState(impl, failureReason);
+    return bridgeBoundaryConfiguration(state.boundaries);
 }
 
 - (BOOL)setBoundaryConfiguration:(WSBoundaryConfiguration *)configuration {
     auto& impl = implementation(_implementation);
-    const BOOL changed = impl.solver->setBoundaryConfiguration(
-        engineBoundaryConfiguration(configuration));
+    std::string failureReason;
+    const BOOL changed = std::visit([&](auto& backend) {
+        return backend.setBoundaryConfiguration(engineBoundaryConfiguration(configuration),
+                                                failureReason);
+    }, impl.backend);
     if (changed) {
         impl.running = false;
+        impl.fallbackReason.clear();
+    } else {
+        impl.fallbackReason = failureReason;
     }
     return changed;
 }
 
 - (void)reset {
     auto& impl = implementation(_implementation);
-    impl.state.reset();
-    impl.solver->stateWasEdited();
+    std::string failureReason;
+    (void)std::visit([&](auto& backend) { return backend.reset(failureReason); }, impl.backend);
+    impl.fallbackReason = failureReason;
     impl.running = false;
 }
 
 - (WSEngineStepStatus)advance:(double)frameDeltaTime {
     auto& impl = implementation(_implementation);
-    return bridgeStatus(impl.solver->advance(frameDeltaTime));
+    std::string failureReason;
+    const bool accelerated = !std::holds_alternative<CpuBackend>(impl.backend);
+    StepStatus result = impl.failureInjection == WSBackendFailureInjectionAcceleratedExecution &&
+            accelerated
+        ? StepStatus::nonFiniteState
+        : std::visit([&](auto& backend) {
+            return backend.advance(frameDeltaTime, failureReason);
+        }, impl.backend);
+    if (result != StepStatus::success && accelerated) {
+        impl.running = false;
+        impl.fallbackReason = failureReason.empty()
+            ? "Injected accelerated execution failure" : failureReason;
+        impl.requestedBackendFailed =
+            impl.requestedBackend == RequestedSimulationBackend::metalGPU;
+        if (impl.requestedBackend == RequestedSimulationBackend::automaticAccelerated) {
+            BackendState validState = currentBackendState(impl, failureReason);
+            const std::string executionReason = impl.fallbackReason;
+            std::string cpuReason;
+            if (loadCPU(impl, validState, cpuReason)) {
+                impl.resolutionReason =
+                    "Accelerated execution failed; CPU Reference recovered the last valid state.";
+                impl.fallbackReason = executionReason;
+                result = StepStatus::success;
+            }
+        }
+    }
+    return bridgeStatus(result);
 }
 
 - (WSEngineStepStatus)stepOnce:(double)timeStep {
     auto& impl = implementation(_implementation);
-    return bridgeStatus(impl.solver->stepOnce(timeStep));
+    std::string failureReason;
+    const bool accelerated = !std::holds_alternative<CpuBackend>(impl.backend);
+    StepStatus result = impl.failureInjection == WSBackendFailureInjectionAcceleratedExecution &&
+            accelerated
+        ? StepStatus::nonFiniteState
+        : std::visit([&](auto& backend) {
+            return backend.stepOnce(timeStep, failureReason);
+        }, impl.backend);
+    if (result != StepStatus::success && accelerated) {
+        impl.running = false;
+        impl.fallbackReason = failureReason.empty()
+            ? "Injected accelerated execution failure" : failureReason;
+        impl.requestedBackendFailed =
+            impl.requestedBackend == RequestedSimulationBackend::metalGPU;
+        if (impl.requestedBackend == RequestedSimulationBackend::automaticAccelerated) {
+            const BackendState validState = currentBackendState(impl, failureReason);
+            const std::string executionReason = impl.fallbackReason;
+            std::string cpuReason;
+            if (loadCPU(impl, validState, cpuReason)) {
+                impl.resolutionReason =
+                    "Accelerated execution failed; CPU Reference recovered the last valid state.";
+                impl.fallbackReason = executionReason;
+                result = StepStatus::success;
+            }
+        }
+    } else if (result != StepStatus::success) {
+        impl.running = false;
+        impl.fallbackReason = failureReason;
+    }
+    return bridgeStatus(result);
 }
 
 - (WSEngineSnapshot *)snapshot {
-    const auto& impl = implementation(_implementation);
-    const auto& state = impl.state;
-    const auto& geometry = state.geometry();
-    const auto count = geometry.width * geometry.height;
+    auto& impl = implementation(_implementation);
+    std::string failureReason;
+    const BackendSnapshot source = std::visit([&](auto& backend) {
+        return backend.makeSnapshot(failureReason);
+    }, impl.backend);
+    if (!failureReason.empty()) {
+        impl.fallbackReason = failureReason;
+    }
+    const auto count = source.width * source.height;
     OwnedSnapshotBuffer<float> bedElevation(count);
     OwnedSnapshotBuffer<float> waterDepth(count);
     OwnedSnapshotBuffer<float> surfaceElevation(count);
     OwnedSnapshotBuffer<float> surfaceDeviation(count);
     OwnedSnapshotBuffer<float> velocityMagnitude(count);
     OwnedSnapshotBuffer<std::uint8_t> wetMask(count);
-    const auto bedValues = bedElevation.values();
-    const auto depthValues = waterDepth.values();
-    const auto surfaceValues = surfaceElevation.values();
-    const auto deviationValues = surfaceDeviation.values();
-    const auto velocityValues = velocityMagnitude.values();
-    const auto wetValues = wetMask.values();
-    for (std::size_t row = 0; row < geometry.height; ++row) {
-        for (std::size_t column = 0; column < geometry.width; ++column) {
-            const auto index = row * geometry.width + column;
-            const auto bedValue = state.bedElevation()(column, row);
-            const auto depthValue = state.waterDepth()(column, row);
-            const auto surfaceValue = bedValue + depthValue;
-            const auto velocityX = 0.5 * (state.velX()(column, row) +
-                                          state.velX()(column + 1, row));
-            const auto velocityY = 0.5 * (state.velY()(column, row) +
-                                          state.velY()(column, row + 1));
-            bedValues[index] = static_cast<float>(bedValue);
-            depthValues[index] = static_cast<float>(depthValue);
-            surfaceValues[index] = static_cast<float>(surfaceValue);
-            deviationValues[index] = static_cast<float>(
-                surfaceValue - impl.referenceSurface[index]);
-            velocityValues[index] = static_cast<float>(std::hypot(velocityX, velocityY));
-            wetValues[index] = depthValue > impl.configuration.minimumWetDepth ? 1 : 0;
-        }
-    }
+    std::ranges::copy(source.bedElevation, bedElevation.values().begin());
+    std::ranges::copy(source.waterDepth, waterDepth.values().begin());
+    std::ranges::copy(source.surfaceElevation, surfaceElevation.values().begin());
+    std::ranges::copy(source.surfaceDeviation, surfaceDeviation.values().begin());
+    std::ranges::copy(source.velocityMagnitude, velocityMagnitude.values().begin());
+    std::ranges::copy(source.wetMask, wetMask.values().begin());
 
-    const auto& sourceDiagnostics = impl.solver->diagnostics();
+    const auto& sourceDiagnostics = source.diagnostics;
     WSEngineDiagnostics *diagnostics = [[WSEngineDiagnostics alloc] init];
     diagnostics.totalVolume = sourceDiagnostics.totalVolume;
     diagnostics.minimumDepth = sourceDiagnostics.minimumDepth;
@@ -511,10 +930,10 @@ namespace {
     diagnostics.status = bridgeStatus(sourceDiagnostics.status);
 
     WSEngineSnapshot *snapshot = [[WSEngineSnapshot alloc] init];
-    snapshot.width = geometry.width;
-    snapshot.height = geometry.height;
-    snapshot.domainWidth = geometry.domainWidth;
-    snapshot.domainHeight = geometry.domainHeight;
+    snapshot.width = source.width;
+    snapshot.height = source.height;
+    snapshot.domainWidth = source.domainWidth;
+    snapshot.domainHeight = source.domainHeight;
     snapshot.bedElevation = bedElevation.consumeAsData();
     snapshot.waterDepth = waterDepth.consumeAsData();
     snapshot.surfaceElevation = surfaceElevation.consumeAsData();
@@ -522,6 +941,8 @@ namespace {
     snapshot.velocityMagnitude = velocityMagnitude.consumeAsData();
     snapshot.wetMask = wetMask.consumeAsData();
     snapshot.diagnostics = diagnostics;
+    snapshot.backendStatus = self.backendStatus;
+    snapshot.acceleratedFieldBuffers = self.acceleratedFieldBuffers;
     return snapshot;
 }
 
@@ -540,23 +961,10 @@ namespace {
     if (!configuration.isValid()) {
         return NO;
     }
-    const auto priorWorkerCount = impl.solver->workerCount();
-    const auto resolvedWorkerCount = workerCount == 0
-        ? std::max<std::size_t>(std::thread::hardware_concurrency(), 1)
-        : static_cast<std::size_t>(workerCount);
     impl.configuration = configuration;
-    if (priorWorkerCount != resolvedWorkerCount) {
-        impl.solver = std::make_unique<WeakNonlinearSolver>(impl.state, configuration);
-        impl.editor = std::make_unique<TerrainEditor>(impl.state,
-                                                      configuration.minimumWetDepth);
-        return YES;
-    }
-    const BOOL updated = impl.solver->setConfiguration(configuration);
-    if (updated) {
-        impl.editor = std::make_unique<TerrainEditor>(impl.state,
-                                                      configuration.minimumWetDepth);
-    }
-    return updated;
+    return std::visit([&](auto& backend) {
+        return backend.setConfiguration(configuration);
+    }, impl.backend);
 }
 
 - (WSTerrainEditResult *)applyMaterialBrushAtX:(double)x
@@ -569,9 +977,7 @@ namespace {
     auto& impl = implementation(_implementation);
     const BrushCommand command{{{x, y}, radius, engineFalloff(falloff)},
                                {engineOperation(operation), amount, engineTarget(target)}};
-    const TerrainEditResult result = impl.editor->applyBrush(command);
-    impl.solver->stateWasEdited();
-    return bridgeEditResult(result);
+    return bridgeEditResult(applyCPUBrush(impl, command));
 }
 
 - (WSTerrainEditResult *)applyMaterialPolygonWithXYCoordinates:(NSData *)xyCoordinates
@@ -591,9 +997,7 @@ namespace {
     auto& impl = implementation(_implementation);
     const PolygonCommand command{points,
                                  {engineOperation(operation), amount, engineTarget(target)}};
-    const TerrainEditResult result = impl.editor->applyPolygon(command);
-    impl.solver->stateWasEdited();
-    return bridgeEditResult(result);
+    return bridgeEditResult(applyCPUPolygon(impl, command));
 }
 
 @end

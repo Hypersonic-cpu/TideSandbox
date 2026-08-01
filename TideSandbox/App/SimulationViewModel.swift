@@ -81,6 +81,8 @@ private enum PendingDiscardAction {
 
 @MainActor
 final class SimulationViewModel: ObservableObject {
+    private static let backendPreferenceKey = "TideSandbox.requestedSimulationBackend"
+
     @Published private(set) var snapshot: SimulationSnapshot = .empty
     @Published private(set) var isPlaying = false
     @Published var viewportMode: ViewportMode = .mosaic2D
@@ -118,6 +120,8 @@ final class SimulationViewModel: ObservableObject {
     @Published var cflNumber = 0.3
     @Published var minimumWetDepth = 1.0e-6
     @Published var workerCount = 0
+    @Published private(set) var requestedBackend: RequestedSimulationBackend =
+        .automaticAccelerated
     @Published var brushRadius = 2.5
     @Published var brushStrength = 0.5
     @Published var brushFalloff: WSBrushFalloff = .smooth
@@ -136,13 +140,14 @@ final class SimulationViewModel: ObservableObject {
     @Published private(set) var isDiscardWarningPresented = false
 
     private let runtime: SimulationRuntime
+    private let preferences: UserDefaults
     private var pendingDiscardAction: PendingDiscardAction?
     private var nextSnapshotGeneration: UInt64 = 1
     private var storedInitialBedElevation = [Float]()
     private var storedInitialWaterDepth = [Float]()
     @Published private(set) var decorativeMapConfiguration = DecorativeMapConfiguration.default
 
-    init() {
+    init(preferences: UserDefaults = .standard) {
 #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
         if arguments.contains("--ui-test-fast-material-brush") {
@@ -152,6 +157,15 @@ final class SimulationViewModel: ObservableObject {
         }
 #endif
         let seed = SimulationPreset.centerBump32.makeSeed()
+        let restoredBackend: RequestedSimulationBackend
+        if let stored = preferences.object(forKey: Self.backendPreferenceKey) as? Int,
+           let backend = RequestedSimulationBackend(rawValue: stored) {
+            restoredBackend = backend
+        } else {
+            restoredBackend = .automaticAccelerated
+        }
+        self.preferences = preferences
+        requestedBackend = restoredBackend
         boundaryConfiguration = seed.boundaries
         storedInitialBedElevation = seed.bedElevation
         storedInitialWaterDepth = seed.waterDepth
@@ -160,11 +174,12 @@ final class SimulationViewModel: ObservableObject {
             waterDepth: seed.waterDepth,
             visualWetThreshold: 1.0e-6
         )
-        runtime = SimulationRuntime(seed: seed)
+        runtime = SimulationRuntime(seed: seed, requestedBackend: restoredBackend)
         runtime.setSnapshotHandler { [weak self] snapshot, initialStateChanged in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.snapshot = snapshot.withGeneration(nextSnapshotGeneration)
+                requestedBackend = snapshot.backendStatus.requested
                 if initialStateChanged {
                     storedInitialBedElevation = snapshot.bedElevation
                     storedInitialWaterDepth = snapshot.waterDepth
@@ -189,6 +204,13 @@ final class SimulationViewModel: ObservableObject {
         guard isPlaying else { return }
         isPlaying = false
         runtime.setPlaying(false)
+    }
+
+    func selectBackend(_ backend: RequestedSimulationBackend) {
+        pause()
+        requestedBackend = backend
+        preferences.set(backend.rawValue, forKey: Self.backendPreferenceKey)
+        runtime.updateRequestedBackend(backend)
     }
 
     func step() {

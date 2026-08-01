@@ -1,6 +1,7 @@
 #pragma once
 
 #import <Foundation/Foundation.h>
+#import <Metal/Metal.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -36,6 +37,44 @@ typedef NS_ENUM(NSInteger, WSBoundaryType) {
     WSBoundaryTypeFreeOpen,
     WSBoundaryTypeDrivenHeight,
 };
+
+typedef NS_ENUM(NSInteger, WSRequestedSimulationBackend) {
+    WSRequestedSimulationBackendAutomaticAccelerated = 0,
+    WSRequestedSimulationBackendMetalGPU,
+    WSRequestedSimulationBackendCPUReference,
+};
+
+typedef NS_ENUM(NSInteger, WSResolvedSimulationBackend) {
+    WSResolvedSimulationBackendMPSGraphAutomatic = 0,
+    WSResolvedSimulationBackendMetalGPU,
+    WSResolvedSimulationBackendCPUReference,
+};
+
+typedef NS_ENUM(NSInteger, WSBackendFailureInjection) {
+    WSBackendFailureInjectionNone = 0,
+    WSBackendFailureInjectionMPSGraphPreparation,
+    WSBackendFailureInjectionMetalPreparation,
+    WSBackendFailureInjectionAcceleratedExecution,
+    WSBackendFailureInjectionAllAcceleratedPreparation,
+};
+
+@interface WSBackendStatus : NSObject
+
+@property(nonatomic, readonly) WSRequestedSimulationBackend requestedBackend;
+@property(nonatomic, readonly) WSResolvedSimulationBackend resolvedBackend;
+@property(nonatomic, readonly, getter=isReady) BOOL ready;
+@property(nonatomic, readonly) NSString *resolutionReason;
+@property(nonatomic, readonly) NSString *fallbackReason;
+@property(nonatomic, readonly) NSString *statePrecision;
+@property(nonatomic, readonly) double graphCompileMilliseconds;
+@property(nonatomic, readonly) double lastStableDtMilliseconds;
+@property(nonatomic, readonly) double lastFramePhysicsMilliseconds;
+@property(nonatomic, readonly) double lastSubstepMilliseconds;
+@property(nonatomic, readonly) double lastReadbackMilliseconds;
+@property(nonatomic, readonly) NSUInteger substepCount;
+@property(nonatomic, readonly) NSUInteger stateSizedAllocationCount;
+
+@end
 
 @interface WSBoundarySideConfiguration : NSObject
 
@@ -109,6 +148,17 @@ typedef NS_ENUM(NSInteger, WSBoundaryType) {
 
 @end
 
+@interface WSAcceleratedFieldBuffers : NSObject
+
+@property(nonatomic, readonly) id<MTLDevice> device;
+@property(nonatomic, readonly) id<MTLBuffer> bedElevation;
+@property(nonatomic, readonly) id<MTLBuffer> waterDepth;
+@property(nonatomic, readonly) NSUInteger width;
+@property(nonatomic, readonly) NSUInteger height;
+@property(nonatomic, readonly) uint64_t generation;
+
+@end
+
 @interface WSEngineSnapshot : NSObject
 
 @property(nonatomic, readonly) NSUInteger width;
@@ -122,6 +172,8 @@ typedef NS_ENUM(NSInteger, WSBoundaryType) {
 @property(nonatomic, readonly) NSData *velocityMagnitude;
 @property(nonatomic, readonly) NSData *wetMask;
 @property(nonatomic, readonly) WSEngineDiagnostics *diagnostics;
+@property(nonatomic, readonly) WSBackendStatus *backendStatus;
+@property(nonatomic, readonly, nullable) WSAcceleratedFieldBuffers *acceleratedFieldBuffers;
 
 @end
 
@@ -131,6 +183,10 @@ typedef NS_ENUM(NSInteger, WSBoundaryType) {
 }
 
 @property(nonatomic, getter=isRunning) BOOL running;
+@property(nonatomic, readonly) WSRequestedSimulationBackend requestedBackend;
+@property(nonatomic, readonly) WSResolvedSimulationBackend resolvedBackend;
+@property(nonatomic, readonly) WSBackendStatus *backendStatus;
+@property(nonatomic, readonly, nullable) WSAcceleratedFieldBuffers *acceleratedFieldBuffers;
 
 - (instancetype)initWithWidth:(NSUInteger)width
                        height:(NSUInteger)height
@@ -168,6 +224,7 @@ typedef NS_ENUM(NSInteger, WSBoundaryType) {
 - (WSEngineStepStatus)advance:(double)frameDeltaTime;
 - (WSEngineStepStatus)stepOnce:(double)timeStep;
 - (WSEngineSnapshot *)snapshot;
+- (BOOL)setRequestedBackend:(WSRequestedSimulationBackend)backend;
 - (WSBoundaryConfiguration *)boundaryConfiguration;
 - (BOOL)setBoundaryConfiguration:(WSBoundaryConfiguration *)configuration;
 
@@ -192,6 +249,9 @@ typedef NS_ENUM(NSInteger, WSBoundaryType) {
                                                          amount:(double)amount
                                                          target:(WSEditTarget)target
     NS_SWIFT_NAME(applyMaterialPolygon(xyCoordinates:operation:amount:target:));
+
+// Deterministic failure injection is exposed for non-interactive backend recovery tests.
+- (void)setBackendFailureInjection:(WSBackendFailureInjection)failure;
 
 @end
 

@@ -31,6 +31,7 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
     private var indexBuffer: MTLBuffer?
     private var scalarBufferSets: [ScalarBufferSet] = []
     private var activeScalarBufferIndex = 0
+    private var directScalarBuffers: ScalarBufferSet?
     private var orbitCamera = OrbitCamera()
     private var settings = Render3DSettings()
     private var domainWidth: Float = 1
@@ -49,10 +50,16 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
 
     var cameraState: OrbitCameraState { orbitCamera.state }
     var topologyRebuildCount: Int { resourceTracker.rebuildCount }
+    var isUsingAcceleratedFieldBuffers: Bool { directScalarBuffers != nil }
+
+    private var activeScalarBuffers: ScalarBufferSet? {
+        if let directScalarBuffers { return directScalarBuffers }
+        guard scalarBufferSets.indices.contains(activeScalarBufferIndex) else { return nil }
+        return scalarBufferSets[activeScalarBufferIndex]
+    }
 
     func currentScalarValues() -> (bedElevation: [Float], waterDepth: [Float])? {
-        guard let mesh, !scalarBufferSets.isEmpty else { return nil }
-        let activeBuffers = scalarBufferSets[activeScalarBufferIndex]
+        guard let mesh, let activeBuffers = activeScalarBuffers else { return nil }
         let bedPointer = activeBuffers.bedElevation.contents()
             .bindMemory(to: Float.self, capacity: mesh.vertexCount)
         let depthPointer = activeBuffers.waterDepth.contents()
@@ -190,11 +197,25 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
             }
         }
 
-        guard !scalarBufferSets.isEmpty else { return }
-        activeScalarBufferIndex = (activeScalarBufferIndex + 1) % scalarBufferSets.count
-        let activeBuffers = scalarBufferSets[activeScalarBufferIndex]
-        Self.copy(snapshot.bedElevation, to: activeBuffers.bedElevation)
-        Self.copy(snapshot.waterDepth, to: activeBuffers.waterDepth)
+        let scalarByteCount = counts.vertexCount * MemoryLayout<Float>.stride
+        if let accelerated = snapshot.acceleratedFieldBuffers,
+           accelerated.width == snapshot.width,
+           accelerated.height == snapshot.height,
+           accelerated.device.registryID == device.registryID,
+           accelerated.bedElevation.length >= scalarByteCount,
+           accelerated.waterDepth.length >= scalarByteCount {
+            directScalarBuffers = ScalarBufferSet(
+                bedElevation: accelerated.bedElevation,
+                waterDepth: accelerated.waterDepth
+            )
+        } else {
+            directScalarBuffers = nil
+            guard !scalarBufferSets.isEmpty else { return }
+            activeScalarBufferIndex = (activeScalarBufferIndex + 1) % scalarBufferSets.count
+            let activeBuffers = scalarBufferSets[activeScalarBufferIndex]
+            Self.copy(snapshot.bedElevation, to: activeBuffers.bedElevation)
+            Self.copy(snapshot.waterDepth, to: activeBuffers.waterDepth)
+        }
         minimumBedElevation = statistics.minimumBedElevation
         maximumBedElevation = statistics.maximumBedElevation
         maximumWaterDepth = statistics.maximumWaterDepth
@@ -412,8 +433,7 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
         commandBuffer.label = "3D height-field frame"
         if let mesh,
            let indexBuffer,
-           !scalarBufferSets.isEmpty {
-            let activeBuffers = scalarBufferSets[activeScalarBufferIndex]
+           let activeBuffers = activeScalarBuffers {
             let uniforms = frameUniforms(mesh: mesh)
             withUnsafeBytes(of: uniforms) { bytes in
                 guard let baseAddress = bytes.baseAddress else { return }
@@ -508,6 +528,7 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
         indexBuffer = newIndexBuffer
         scalarBufferSets = newScalarBufferSets
         activeScalarBufferIndex = 0
+        directScalarBuffers = nil
         return true
     }
 

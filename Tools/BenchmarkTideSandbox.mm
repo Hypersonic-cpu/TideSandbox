@@ -6,6 +6,7 @@
 #include "../TideSandbox/Engine/WeakNonlinearSolver.hh"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -26,6 +27,18 @@ using Clock = std::chrono::steady_clock;
 struct SampleSummary final {
     double medianMilliseconds = 0.0;
     double medianAbsoluteDeviationMilliseconds = 0.0;
+};
+
+struct AcceleratedSummary final {
+    SampleSummary totalStep;
+    SampleSummary stableReduction;
+    SampleSummary substepCompute;
+    SampleSummary snapshotReadback;
+    SampleSummary snapshotWall;
+    SampleSummary directBufferHandoff;
+    double coldGraphCompileMilliseconds = 0.0;
+    std::size_t stateSizedAllocationCount = 0;
+    WSResolvedSimulationBackend resolvedBackend = WSResolvedSimulationBackendCPUReference;
 };
 
 [[nodiscard]] SampleSummary summarize(std::vector<double> samples) {
@@ -144,7 +157,8 @@ void profileSolver(const std::size_t size, const std::size_t workers) {
     const double domainSize = static_cast<double>(size);
     WSWaterEngineBridge * const bridge = [[WSWaterEngineBridge alloc]
         initWithWidth:size height:size domainWidth:domainSize domainHeight:domainSize];
-    if (![bridge loadWidth:size height:size domainWidth:domainSize domainHeight:domainSize
+    if (![bridge setRequestedBackend:WSRequestedSimulationBackendCPUReference] ||
+        ![bridge loadWidth:size height:size domainWidth:domainSize domainHeight:domainSize
                 bedElevation:bedData waterDepth:depthData]) {
         std::abort();
     }
@@ -167,6 +181,101 @@ void profileSolver(const std::size_t size, const std::size_t workers) {
     return summarize(std::move(samples));
 }
 
+[[nodiscard]] AcceleratedSummary benchmarkBridge(
+    const std::size_t width,
+    const std::size_t height,
+    const WSRequestedSimulationBackend requestedBackend
+) {
+    constexpr std::size_t repetitions = 5;
+    constexpr std::size_t warmupIterations = 20;
+    const std::size_t cells = width * height;
+    const std::size_t iterations = cells <= 16'384 ? 30 : (cells <= 65'536 ? 12 : 5);
+    std::vector<float> bed(cells);
+    std::vector<float> depth(cells);
+    for (std::size_t row = 0; row < height; ++row) {
+        for (std::size_t column = 0; column < width; ++column) {
+            const std::size_t index = row * width + column;
+            const float terrain = 0.08F * std::sin(static_cast<float>(column) * 0.17F) *
+                                  std::cos(static_cast<float>(row) * 0.13F);
+            const float x = static_cast<float>(column) - static_cast<float>(width) * 0.47F;
+            const float y = static_cast<float>(row) - static_cast<float>(height) * 0.53F;
+            bed[index] = terrain;
+            depth[index] = 2.0F - terrain + 0.03F * std::exp(-0.002F * (x * x + y * y));
+        }
+    }
+    NSData * const bedData = [NSData dataWithBytes:bed.data()
+                                              length:cells * sizeof(float)];
+    NSData * const depthData = [NSData dataWithBytes:depth.data()
+                                                length:cells * sizeof(float)];
+    std::vector<double> totalSamples;
+    std::vector<double> stableSamples;
+    std::vector<double> substepSamples;
+    std::vector<double> readbackSamples;
+    std::vector<double> snapshotWallSamples;
+    std::vector<double> directHandoffSamples;
+    totalSamples.reserve(repetitions * iterations);
+    stableSamples.reserve(repetitions * iterations);
+    substepSamples.reserve(repetitions * iterations);
+    readbackSamples.reserve(repetitions);
+    snapshotWallSamples.reserve(repetitions);
+    directHandoffSamples.reserve(repetitions);
+    AcceleratedSummary result;
+    for (std::size_t repetition = 0; repetition < repetitions; ++repetition) {
+        WSWaterEngineBridge * const bridge = [[WSWaterEngineBridge alloc]
+            initWithWidth:8 height:8 domainWidth:8.0 domainHeight:8.0];
+        if (![bridge setRequestedBackend:requestedBackend] ||
+            ![bridge loadWidth:width height:height domainWidth:static_cast<double>(width)
+                    domainHeight:static_cast<double>(height) bedElevation:bedData
+                    waterDepth:depthData]) {
+            std::abort();
+        }
+        result.coldGraphCompileMilliseconds = std::max(
+            result.coldGraphCompileMilliseconds,
+            bridge.backendStatus.graphCompileMilliseconds);
+        for (std::size_t index = 0; index < warmupIterations; ++index) {
+            if ([bridge stepOnce:0.001] != WSEngineStepStatusSuccess) { std::abort(); }
+        }
+        for (std::size_t index = 0; index < iterations; ++index) {
+            const auto start = Clock::now();
+            if ([bridge stepOnce:0.001] != WSEngineStepStatusSuccess) { std::abort(); }
+            totalSamples.push_back(std::chrono::duration<double, std::milli>(
+                Clock::now() - start).count());
+            WSBackendStatus * const status = bridge.backendStatus;
+            stableSamples.push_back(status.lastStableDtMilliseconds);
+            substepSamples.push_back(status.lastSubstepMilliseconds);
+        }
+        const auto readbackStart = Clock::now();
+        @autoreleasepool { (void)[bridge snapshot]; }
+        snapshotWallSamples.push_back(std::chrono::duration<double, std::milli>(
+            Clock::now() - readbackStart).count());
+        readbackSamples.push_back(bridge.backendStatus.lastReadbackMilliseconds);
+        constexpr std::size_t handoffIterations = 500;
+        std::uint64_t observedGeneration = 0;
+        const auto handoffStart = Clock::now();
+        for (std::size_t index = 0; index < handoffIterations; ++index) {
+            @autoreleasepool {
+                WSAcceleratedFieldBuffers * const buffers = bridge.acceleratedFieldBuffers;
+                observedGeneration += buffers.generation;
+            }
+        }
+        directHandoffSamples.push_back(std::chrono::duration<double, std::milli>(
+            Clock::now() - handoffStart).count() / static_cast<double>(handoffIterations));
+        if (bridge.resolvedBackend != WSResolvedSimulationBackendCPUReference &&
+            observedGeneration == 0) {
+            std::abort();
+        }
+        result.stateSizedAllocationCount = bridge.backendStatus.stateSizedAllocationCount;
+        result.resolvedBackend = bridge.resolvedBackend;
+    }
+    result.totalStep = summarize(std::move(totalSamples));
+    result.stableReduction = summarize(std::move(stableSamples));
+    result.substepCompute = summarize(std::move(substepSamples));
+    result.snapshotReadback = summarize(std::move(readbackSamples));
+    result.snapshotWall = summarize(std::move(snapshotWallSamples));
+    result.directBufferHandoff = summarize(std::move(directHandoffSamples));
+    return result;
+}
+
 } // namespace
 
 int main() {
@@ -179,6 +288,10 @@ int main() {
         constexpr std::size_t parallelWorkers = 4;
         std::printf("META,%s,%u,%zu\n", build, std::thread::hardware_concurrency(),
                     parallelWorkers);
+        id<MTLDevice> const device = MTLCreateSystemDefaultDevice();
+        const char * const deviceName = device.name.UTF8String;
+        std::printf("DEVICE,%s,%llu\n", deviceName == nullptr ? "unavailable" : deviceName,
+                    static_cast<unsigned long long>(device.registryID));
         std::printf("PASSES_HEADER,size,workers,substeps,stable_ms,surface_ms,pressure_ms,"
                     "damping_ms,flux_ms,limiter_scale_ms,flux_limit_ms,continuity_ms,cleanup_ms,"
                     "dry_velocity_ms,validation_ms,diagnostics_ms,total_substep_ms\n");
@@ -201,6 +314,56 @@ int main() {
                 snapshot.medianMilliseconds, snapshot.medianAbsoluteDeviationMilliseconds);
             profileSolver(size, 1);
             profileSolver(size, parallelWorkers);
+        }
+        std::printf("ACCEL_HEADER,width,height,backend,resolved,total_step_ms,stable_ms,"
+                    "substep_ms,readback_ms,snapshot_wall_ms,direct_handoff_ms,"
+                    "cold_compile_ms,state_allocations,speedup_vs_cpu\n");
+        constexpr std::array shapes{
+            std::pair{64UL, 64UL}, std::pair{128UL, 128UL},
+            std::pair{256UL, 256UL}, std::pair{384UL, 384UL},
+            std::pair{512UL, 512UL}, std::pair{256UL, 512UL},
+        };
+        for (const auto [width, height] : shapes) {
+            const AcceleratedSummary cpu = benchmarkBridge(
+                width, height, WSRequestedSimulationBackendCPUReference);
+            const AcceleratedSummary metal = benchmarkBridge(
+                width, height, WSRequestedSimulationBackendMetalGPU);
+            const AcceleratedSummary automatic = benchmarkBridge(
+                width, height, WSRequestedSimulationBackendAutomaticAccelerated);
+            const double speedup = cpu.totalStep.medianMilliseconds /
+                                   metal.totalStep.medianMilliseconds;
+            const double automaticSpeedup = cpu.totalStep.medianMilliseconds /
+                                            automatic.totalStep.medianMilliseconds;
+            std::printf("ACCEL,%zu,%zu,CPU,%ld,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%zu,1.000000\n",
+                        width, height, static_cast<long>(cpu.resolvedBackend),
+                        cpu.totalStep.medianMilliseconds,
+                        cpu.stableReduction.medianMilliseconds,
+                        cpu.substepCompute.medianMilliseconds,
+                        cpu.snapshotReadback.medianMilliseconds,
+                        cpu.snapshotWall.medianMilliseconds,
+                        cpu.directBufferHandoff.medianMilliseconds,
+                        cpu.coldGraphCompileMilliseconds,
+                        cpu.stateSizedAllocationCount);
+            std::printf("ACCEL,%zu,%zu,Metal,%ld,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%zu,%.6f\n",
+                        width, height, static_cast<long>(metal.resolvedBackend),
+                        metal.totalStep.medianMilliseconds,
+                        metal.stableReduction.medianMilliseconds,
+                        metal.substepCompute.medianMilliseconds,
+                        metal.snapshotReadback.medianMilliseconds,
+                        metal.snapshotWall.medianMilliseconds,
+                        metal.directBufferHandoff.medianMilliseconds,
+                        metal.coldGraphCompileMilliseconds,
+                        metal.stateSizedAllocationCount, speedup);
+            std::printf("ACCEL,%zu,%zu,Automatic,%ld,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%zu,%.6f\n",
+                        width, height, static_cast<long>(automatic.resolvedBackend),
+                        automatic.totalStep.medianMilliseconds,
+                        automatic.stableReduction.medianMilliseconds,
+                        automatic.substepCompute.medianMilliseconds,
+                        automatic.snapshotReadback.medianMilliseconds,
+                        automatic.snapshotWall.medianMilliseconds,
+                        automatic.directBufferHandoff.medianMilliseconds,
+                        automatic.coldGraphCompileMilliseconds,
+                        automatic.stateSizedAllocationCount, automaticSpeedup);
         }
     }
     return 0;

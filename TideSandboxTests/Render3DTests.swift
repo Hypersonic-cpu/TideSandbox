@@ -498,6 +498,40 @@ final class Render3DTests: XCTestCase {
         #endif
     }
 
+    func testRendererConsumesAcceleratedFieldBuffersWithoutReupload() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("Metal device is unavailable")
+        }
+        let view = InteractiveMTKView(
+            frame: CGRect(x: 0, y: 0, width: 640, height: 480),
+            device: device
+        )
+        view.colorPixelFormat = .bgra8Unorm_srgb
+        view.depthStencilPixelFormat = .depth32Float
+        view.drawableSize = CGSize(width: 640, height: 480)
+        let renderer = try XCTUnwrap(HeightFieldRenderer(view: view))
+        let bridge = WSWaterEngineBridge(
+            width: 16, height: 16, domainWidth: 16, domainHeight: 16
+        )
+        XCTAssertTrue(bridge.setRequestedBackend(.metalGPU))
+        let accelerated = SimulationSnapshot(bridge.snapshot()).withGeneration(1)
+        XCTAssertNotNil(accelerated.acceleratedFieldBuffers)
+
+        renderer.update(snapshot: accelerated)
+        XCTAssertTrue(renderer.isUsingAcceleratedFieldBuffers)
+        XCTAssertEqual(renderer.currentScalarValues()?.bedElevation,
+                       accelerated.bedElevation)
+        XCTAssertEqual(renderer.currentScalarValues()?.waterDepth,
+                       accelerated.waterDepth)
+
+        XCTAssertTrue(bridge.setRequestedBackend(.cpuReference))
+        let cpu = SimulationSnapshot(bridge.snapshot()).withGeneration(2)
+        renderer.update(snapshot: cpu)
+        XCTAssertFalse(renderer.isUsingAcceleratedFieldBuffers)
+        XCTAssertEqual(renderer.topologyRebuildCount, 1)
+        XCTAssertEqual(renderer.currentScalarValues()?.waterDepth, cpu.waterDepth)
+    }
+
     func testEditToolPausesImmediatelyAndPolygonSurvivesViewportSwitches() {
         let model = SimulationViewModel()
         model.togglePlayback()

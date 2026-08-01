@@ -322,6 +322,33 @@ private struct InspectorView: View {
 
     private var simulationSection: some View {
         InspectorSection(title: "Simulation", systemImage: "waveform.path.ecg") {
+            Picker("Compute", selection: Binding(
+                get: { model.requestedBackend },
+                set: { model.selectBackend($0) }
+            )) {
+                ForEach(RequestedSimulationBackend.allCases) { backend in
+                    Text(backend.title).tag(backend)
+                }
+            }
+            .accessibilityIdentifier("simulation-backend-picker")
+            LabeledContent("Active backend") {
+                Text(model.snapshot.backendStatus.resolved.diagnosticTitle)
+                    .multilineTextAlignment(.trailing)
+            }
+            if !model.snapshot.backendStatus.resolutionReason.isEmpty {
+                Text(model.snapshot.backendStatus.resolutionReason)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("simulation-backend-reason")
+            }
+            if !model.snapshot.backendStatus.isReady {
+                Text(model.snapshot.backendStatus.fallbackReason.isEmpty
+                     ? "The requested backend is unavailable."
+                     : model.snapshot.backendStatus.fallbackReason)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier("simulation-backend-status")
+            }
             LabeledSlider(title: "Speed", value: $model.speed, range: 0.1...4,
                           format: "%.1f×")
                 .onChange(of: model.speed) { _, _ in model.updatePlaybackSpeed() }
@@ -378,7 +405,38 @@ private struct InspectorView: View {
             Text("Positive flow is outward. Boundary changes pause and apply atomically.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            Divider()
+            LabeledContent("Net outward flow") {
+                Text(signedFlow(model.snapshot.diagnostics.netBoundaryOutflowRate))
+            }
+            let rates = model.snapshot.diagnostics.instantaneousBoundaryOutflowRate
+            if rates.count == 4 {
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 3) {
+                    GridRow {
+                        Text("Left")
+                        Text(signedFlow(rates[0]))
+                        Text("Right")
+                        Text(signedFlow(rates[1]))
+                    }
+                    GridRow {
+                        Text("Bottom")
+                        Text(signedFlow(rates[2]))
+                        Text("Top")
+                        Text(signedFlow(rates[3]))
+                    }
+                }
+                .font(.caption.monospacedDigit())
+            }
+            LabeledContent("Volume error") {
+                Text(String(format: "%+.3e m³",
+                            model.snapshot.diagnostics.accountingError))
+                    .monospacedDigit()
+            }
         }
+    }
+
+    private func signedFlow(_ value: Double) -> String {
+        String(format: "%+.3e m³/s", value)
     }
 
     @ViewBuilder

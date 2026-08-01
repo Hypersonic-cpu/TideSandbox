@@ -632,6 +632,11 @@ final class DisplayTests: XCTestCase {
 
 @MainActor
 final class BridgeTests: XCTestCase {
+    private static func isolatedPreferences() -> UserDefaults {
+        let suiteName = "TideSandboxTests.backend.\(UUID().uuidString)"
+        return UserDefaults(suiteName: suiteName)!
+    }
+
     func testEveryBuiltInPresetHasValidatedHydrographyAndLoadsThroughBridge() throws {
         for preset in SimulationPreset.allCases {
             let seed = preset.makeSeed()
@@ -798,5 +803,234 @@ final class BridgeTests: XCTestCase {
         bridge.reset()
         let reset = SimulationSnapshot(bridge.snapshot())
         XCTAssertEqual(reset.bedElevation[3 * 16 + 3], 0)
+    }
+
+    func testBackendSwitchPreservesStateTimeAndForcedMetalFailureIsTruthful() throws {
+        let seed = SimulationPreset.centerBump32.makeSeed()
+        let bridge = WSWaterEngineBridge(
+            width: UInt(seed.width),
+            height: UInt(seed.height),
+            domainWidth: seed.domainWidth,
+            domainHeight: seed.domainHeight
+        )
+        XCTAssertEqual(bridge.requestedBackend, .automaticAccelerated)
+        XCTAssertEqual(bridge.resolvedBackend, .cpuReference)
+        XCTAssertTrue(bridge.backendStatus.isReady)
+        XCTAssertTrue(bridge.backendStatus.resolutionReason.contains("below"))
+        XCTAssertEqual(bridge.advance(0.01), .success)
+        let cpu = SimulationSnapshot(bridge.snapshot())
+
+        XCTAssertTrue(bridge.setRequestedBackend(.metalGPU))
+        XCTAssertEqual(bridge.requestedBackend, .metalGPU)
+        XCTAssertEqual(bridge.resolvedBackend, .metalGPU)
+        XCTAssertTrue(bridge.backendStatus.isReady)
+        XCTAssertEqual(bridge.backendStatus.statePrecision, "Float32")
+        XCTAssertTrue(bridge.backendStatus.resolutionReason.contains("explicitly"))
+        XCTAssertGreaterThan(bridge.backendStatus.stateSizedAllocationCount, 0)
+        let metalBridgeSnapshot = bridge.snapshot()
+        let directBuffers = try XCTUnwrap(metalBridgeSnapshot.acceleratedFieldBuffers)
+        XCTAssertEqual(directBuffers.width, UInt(seed.width))
+        XCTAssertEqual(directBuffers.height, UInt(seed.height))
+        XCTAssertGreaterThanOrEqual(
+            directBuffers.bedElevation.length,
+            seed.width * seed.height * MemoryLayout<Float>.stride
+        )
+        let metal = SimulationSnapshot(metalBridgeSnapshot)
+        XCTAssertEqual(metal.diagnostics.simulatedTime, cpu.diagnostics.simulatedTime,
+                       accuracy: 1.0e-12)
+        XCTAssertEqual(metal.waterDepth, cpu.waterDepth)
+
+        XCTAssertEqual(bridge.stepOnce(0.001), .success)
+        let advancedMetalBridgeSnapshot = bridge.snapshot()
+        XCTAssertGreaterThan(
+            try XCTUnwrap(advancedMetalBridgeSnapshot.acceleratedFieldBuffers).generation,
+            directBuffers.generation
+        )
+        let advancedMetal = SimulationSnapshot(advancedMetalBridgeSnapshot)
+        XCTAssertTrue(bridge.setRequestedBackend(.cpuReference))
+        XCTAssertEqual(bridge.resolvedBackend, .cpuReference)
+        let cpuBridgeSnapshot = bridge.snapshot()
+        XCTAssertNil(cpuBridgeSnapshot.acceleratedFieldBuffers)
+        let switchedCPU = SimulationSnapshot(cpuBridgeSnapshot)
+        XCTAssertEqual(switchedCPU.diagnostics.simulatedTime,
+                       advancedMetal.diagnostics.simulatedTime, accuracy: 1.0e-12)
+        XCTAssertEqual(switchedCPU.waterDepth, advancedMetal.waterDepth)
+
+        bridge.setBackendFailureInjection(.metalPreparation)
+        XCTAssertFalse(bridge.setRequestedBackend(.metalGPU))
+        XCTAssertEqual(bridge.requestedBackend, .metalGPU)
+        XCTAssertEqual(bridge.resolvedBackend, .cpuReference)
+        XCTAssertFalse(bridge.backendStatus.isReady)
+        XCTAssertTrue(bridge.backendStatus.fallbackReason.contains("Injected Metal"))
+        XCTAssertFalse(bridge.isRunning)
+    }
+
+    func testAcceleratedEditSynchronizesOnceReloadsAndResumesWithFreshCFL() throws {
+        let seed = SimulationPreset.centerBump32.makeSeed()
+        let bridge = WSWaterEngineBridge(
+            width: UInt(seed.width), height: UInt(seed.height),
+            domainWidth: seed.domainWidth, domainHeight: seed.domainHeight
+        )
+        XCTAssertTrue(bridge.load(
+            width: UInt(seed.width), height: UInt(seed.height),
+            domainWidth: seed.domainWidth, domainHeight: seed.domainHeight,
+            bedElevation: seed.bedData, waterDepth: seed.depthData
+        ))
+        XCTAssertTrue(bridge.setRequestedBackend(.metalGPU))
+        XCTAssertEqual(bridge.stepOnce(0.001), .success)
+        let before = SimulationSnapshot(bridge.snapshot())
+        let oldBuffers = try XCTUnwrap(before.acceleratedFieldBuffers)
+        let warmedAllocationCount = bridge.backendStatus.stateSizedAllocationCount
+
+        let edit = bridge.applyMaterialBrush(
+            x: 16.5, y: 16.5, radius: 3,
+            operation: .addWater, amount: 0.05,
+            falloff: .smooth, target: .pausedCurrentState
+        )
+        XCTAssertTrue(edit.isChanged)
+        XCTAssertGreaterThan(edit.waterVolumeDelta, 0)
+        XCTAssertFalse(bridge.isRunning)
+        XCTAssertEqual(bridge.requestedBackend, .metalGPU)
+        XCTAssertEqual(bridge.resolvedBackend, .metalGPU)
+        XCTAssertTrue(bridge.backendStatus.isReady)
+
+        let edited = SimulationSnapshot(bridge.snapshot())
+        let newBuffers = try XCTUnwrap(edited.acceleratedFieldBuffers)
+        XCTAssertEqual(edited.diagnostics.simulatedTime,
+                       before.diagnostics.simulatedTime, accuracy: 1.0e-12)
+        XCTAssertEqual(
+            edited.diagnostics.totalVolume,
+            before.diagnostics.totalVolume + edit.waterVolumeDelta,
+            accuracy: 2.0e-3
+        )
+        XCTAssertEqual(
+            edited.diagnostics.accountedExpectedVolume,
+            before.diagnostics.accountedExpectedVolume + edit.waterVolumeDelta,
+            accuracy: 1.0e-9
+        )
+        XCTAssertTrue(oldBuffers.bedElevation === newBuffers.bedElevation,
+                      "editing must upload into the warmed persistent device buffers")
+        XCTAssertGreaterThan(newBuffers.generation, oldBuffers.generation)
+        XCTAssertEqual(bridge.backendStatus.stateSizedAllocationCount, warmedAllocationCount)
+
+        XCTAssertEqual(bridge.stepOnce(0.001), .success,
+                       "the first resumed step must recompute CFL from edited state")
+        let resumed = SimulationSnapshot(bridge.snapshot())
+        XCTAssertEqual(resumed.diagnostics.simulatedTime,
+                       edited.diagnostics.simulatedTime + 0.001, accuracy: 1.0e-12)
+        XCTAssertTrue(resumed.diagnostics.isFinite)
+        XCTAssertGreaterThanOrEqual(resumed.diagnostics.minimumDepth, 0)
+
+        XCTAssertTrue(bridge.setRequestedBackend(.cpuReference))
+        let synchronizedForSave = SimulationSnapshot(bridge.snapshot())
+        XCTAssertNil(synchronizedForSave.acceleratedFieldBuffers)
+        XCTAssertEqual(synchronizedForSave.waterDepth, resumed.waterDepth)
+        XCTAssertEqual(synchronizedForSave.bedElevation, resumed.bedElevation)
+        XCTAssertEqual(synchronizedForSave.diagnostics.simulatedTime,
+                       resumed.diagnostics.simulatedTime, accuracy: 1.0e-12)
+    }
+
+    func testAutomaticAcceleratedExecutionFailureFallsBackFromLastValidState() throws {
+        let width = 256
+        let height = 256
+        let count = width * height
+        let bed = [Float](repeating: 0, count: count)
+        var depth = [Float](repeating: 1, count: count)
+        depth[(height / 2) * width + width / 2] += 0.02
+        let bridge = WSWaterEngineBridge(
+            width: UInt(width), height: UInt(height),
+            domainWidth: Double(width), domainHeight: Double(height)
+        )
+        XCTAssertTrue(bridge.load(
+            width: UInt(width), height: UInt(height),
+            domainWidth: Double(width), domainHeight: Double(height),
+            bedElevation: bed.withUnsafeBytes { Data($0) },
+            waterDepth: depth.withUnsafeBytes { Data($0) }
+        ))
+        XCTAssertEqual(bridge.requestedBackend, .automaticAccelerated)
+        XCTAssertEqual(bridge.resolvedBackend, .metalGPU)
+        XCTAssertTrue(bridge.backendStatus.resolutionReason.contains("fastest validated"))
+        let valid = SimulationSnapshot(bridge.snapshot())
+
+        bridge.setBackendFailureInjection(.acceleratedExecution)
+        XCTAssertEqual(bridge.stepOnce(0.001), .success)
+        XCTAssertFalse(bridge.isRunning)
+        XCTAssertEqual(bridge.requestedBackend, .automaticAccelerated)
+        XCTAssertEqual(bridge.resolvedBackend, .cpuReference)
+        XCTAssertTrue(bridge.backendStatus.isReady)
+        XCTAssertTrue(bridge.backendStatus.fallbackReason.contains("execution failure"))
+        XCTAssertTrue(bridge.backendStatus.resolutionReason.contains("recovered"))
+        let recovered = SimulationSnapshot(bridge.snapshot())
+        XCTAssertEqual(recovered.diagnostics.simulatedTime,
+                       valid.diagnostics.simulatedTime, accuracy: 1.0e-12)
+        XCTAssertEqual(recovered.waterDepth, valid.waterDepth)
+    }
+
+    func testForcedMetalExecutionFailureStaysPausedAndReportsNotReady() throws {
+        let bridge = WSWaterEngineBridge(
+            width: 16, height: 16, domainWidth: 16, domainHeight: 16
+        )
+        XCTAssertTrue(bridge.setRequestedBackend(.metalGPU))
+        XCTAssertEqual(bridge.resolvedBackend, .metalGPU)
+        bridge.isRunning = true
+        bridge.setBackendFailureInjection(.acceleratedExecution)
+
+        XCTAssertEqual(bridge.advance(0.001), .nonFiniteState)
+        XCTAssertEqual(bridge.requestedBackend, .metalGPU)
+        XCTAssertEqual(bridge.resolvedBackend, .metalGPU)
+        XCTAssertFalse(bridge.backendStatus.isReady)
+        XCTAssertFalse(bridge.isRunning)
+    }
+
+    func testAutomaticMPSGraphPreparationFailureFallsBackTruthfullyToMetal() {
+        let bridge = WSWaterEngineBridge(
+            width: 256, height: 256, domainWidth: 256, domainHeight: 256
+        )
+        XCTAssertTrue(bridge.setRequestedBackend(.cpuReference))
+        bridge.setBackendFailureInjection(.mpsGraphPreparation)
+
+        XCTAssertTrue(bridge.setRequestedBackend(.automaticAccelerated))
+        XCTAssertEqual(bridge.requestedBackend, .automaticAccelerated)
+        XCTAssertEqual(bridge.resolvedBackend, .metalGPU)
+        XCTAssertTrue(bridge.backendStatus.isReady)
+        XCTAssertTrue(bridge.backendStatus.fallbackReason.contains("Injected MPSGraph"))
+        XCTAssertTrue(bridge.backendStatus.resolutionReason.contains("Metal GPU"))
+    }
+
+    func testAutomaticFallsBackToCPUWhenBothAcceleratorsFailPreparation() {
+        let bridge = WSWaterEngineBridge(
+            width: 256, height: 256, domainWidth: 256, domainHeight: 256
+        )
+        XCTAssertTrue(bridge.setRequestedBackend(.cpuReference))
+        bridge.setBackendFailureInjection(.allAcceleratedPreparation)
+
+        XCTAssertTrue(bridge.setRequestedBackend(.automaticAccelerated))
+        XCTAssertEqual(bridge.requestedBackend, .automaticAccelerated)
+        XCTAssertEqual(bridge.resolvedBackend, .cpuReference)
+        XCTAssertTrue(bridge.backendStatus.isReady)
+        XCTAssertTrue(bridge.backendStatus.fallbackReason.contains("MPSGraph"))
+        XCTAssertTrue(bridge.backendStatus.fallbackReason.contains("Metal"))
+        XCTAssertTrue(bridge.backendStatus.resolutionReason.contains("CPU Reference"))
+    }
+
+    func testBackendPreferenceRestoresAndSelectionPausesWithoutPointerAutomation() {
+        let preferences = Self.isolatedPreferences()
+        preferences.set(RequestedSimulationBackend.cpuReference.rawValue,
+                        forKey: "TideSandbox.requestedSimulationBackend")
+        let restored = SimulationViewModel(preferences: preferences)
+        XCTAssertEqual(restored.requestedBackend, .cpuReference)
+
+        restored.togglePlayback()
+        XCTAssertTrue(restored.isPlaying)
+        restored.selectBackend(.metalGPU)
+        XCTAssertFalse(restored.isPlaying)
+        XCTAssertEqual(restored.requestedBackend, .metalGPU)
+        XCTAssertEqual(
+            preferences.integer(forKey: "TideSandbox.requestedSimulationBackend"),
+            RequestedSimulationBackend.metalGPU.rawValue
+        )
+
+        let secondLaunch = SimulationViewModel(preferences: preferences)
+        XCTAssertEqual(secondLaunch.requestedBackend, .metalGPU)
     }
 }

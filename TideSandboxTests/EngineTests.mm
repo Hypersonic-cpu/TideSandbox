@@ -1,5 +1,7 @@
 #import <XCTest/XCTest.h>
 
+#include "../TideSandbox/Accelerated/MetalGPUBackend.hh"
+#include "../TideSandbox/Accelerated/MPSGraphAutomaticBackend.hh"
 #include "../TideSandbox/Engine/Grid.hh"
 #include "../TideSandbox/Engine/SimulationState.hh"
 #include "../TideSandbox/Engine/TerrainEdit.hh"
@@ -11,11 +13,16 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <numeric>
 #include <numbers>
 #include <span>
 #include <vector>
 
 using namespace tide::swe;
+using tide::accelerated::BackendSnapshot;
+using tide::accelerated::BackendState;
+using tide::accelerated::MetalGPUBackend;
+using tide::accelerated::MPSGraphAutomaticBackend;
 
 namespace {
 
@@ -68,12 +75,97 @@ namespace {
     return state;
 }
 
+[[nodiscard]] SimulationState makeMovableShoreline(const std::size_t size) {
+    const GridGeometry geometry{size, size, static_cast<double>(size),
+                                static_cast<double>(size)};
+    std::vector<double> bed(size * size);
+    std::vector<double> depth(size * size);
+    for (std::size_t row = 0; row < size; ++row) {
+        const double y = (static_cast<double>(row) + 0.5) / static_cast<double>(size);
+        for (std::size_t column = 0; column < size; ++column) {
+            const double x = (static_cast<double>(column) + 0.5) /
+                             static_cast<double>(size);
+            const std::size_t index = row * size + column;
+            bed[index] = 0.45 + 1.10 * x + 0.04 * std::sin(6.0 * std::numbers::pi * y);
+            const double pulseX = (x - 0.36) / 0.07;
+            const double pulseY = (y - 0.52) / 0.18;
+            const double surface = 1.0 + 0.12 * std::exp(-(pulseX * pulseX + pulseY * pulseY));
+            depth[index] = std::max(surface - bed[index], 0.0);
+        }
+    }
+    SimulationState state;
+    const bool initialized = state.initializeDepth(geometry, bed, depth);
+    assert(initialized);
+    return state;
+}
+
+[[nodiscard]] SimulationState makeCoastalWaveState(const bool hasInitialStep) {
+    constexpr std::size_t size = 512;
+    constexpr double baseSurface = 1.20;
+    const GridGeometry geometry{size, size, static_cast<double>(size),
+                                static_cast<double>(size)};
+    std::vector<double> bed(size * size);
+    std::vector<double> depth(size * size);
+    for (std::size_t row = 0; row < size; ++row) {
+        const double y = (static_cast<double>(row) + 0.5) / static_cast<double>(size);
+        for (std::size_t column = 0; column < size; ++column) {
+            const double x = (static_cast<double>(column) + 0.5) /
+                             static_cast<double>(size);
+            const double coastalSlope = -1.25 + 3.10 * x;
+            const double channelCoordinate = (y - 0.52) / 0.065;
+            const double channel = 0.95 * std::exp(-channelCoordinate * channelCoordinate);
+            const double sandbarCoordinate = (x - 0.64) / 0.055;
+            const double sandbar = 0.45 * std::exp(-sandbarCoordinate * sandbarCoordinate) *
+                (0.65 + 0.35 * std::cos(6.0 * std::numbers::pi * y));
+            const double shoals = 0.12 * std::sin(14.0 * std::numbers::pi * y) *
+                                  (0.25 + 0.75 * x);
+            const double rawBed = coastalSlope - channel + sandbar + shoals;
+            double normalizedStep = (x - 0.79) / 0.02;
+            normalizedStep = std::clamp(normalizedStep, 0.0, 1.0);
+            const double smoothStep = normalizedStep * normalizedStep *
+                                      (3.0 - 2.0 * normalizedStep);
+            const double surface = baseSurface + (hasInitialStep ? 0.55 * smoothStep : 0.0);
+            const std::size_t index = row * size + column;
+            // Built-in packages persist Float32 fields, so quantize this fixture at the same
+            // boundary before comparing the Float64 oracle with an accelerated backend.
+            const float storedBed = static_cast<float>(rawBed);
+            const float storedDepth = static_cast<float>(
+                std::max(surface - static_cast<double>(storedBed), 0.0));
+            bed[index] = storedBed;
+            depth[index] = storedDepth;
+        }
+    }
+    BoundaryConfiguration boundaries;
+    if (!hasInitialStep) {
+        boundaries.right = {
+            .type = BoundaryType::drivenHeight,
+            .driven = {
+                .meanSurfaceElevation = baseSurface,
+                .amplitude = 0.25,
+                .periodSeconds = 8.0,
+                .phaseRadians = 0.0,
+                .rampSeconds = 2.0,
+            },
+        };
+    }
+    SimulationState state;
+    const bool initialized = state.initializeDepth(geometry, bed, depth, {}, boundaries);
+    assert(initialized);
+    return state;
+}
+
 [[nodiscard]] double volume(const SimulationState& state) noexcept {
     double depthSum = 0.0;
     for (const double depth : state.waterDepth().values()) {
         depthSum += depth;
     }
     return depthSum * state.geometry().dx() * state.geometry().dy();
+}
+
+[[nodiscard]] double volume(const BackendState& state) noexcept {
+    double depthSum = 0.0;
+    for (const double depth : state.waterDepth) { depthSum += depth; }
+    return depthSum * state.geometry.dx() * state.geometry.dy();
 }
 
 [[nodiscard]] double maximumDifference(std::span<const double> first,
@@ -84,6 +176,91 @@ namespace {
         result = std::max(result, std::abs(first[index] - second[index]));
     }
     return result;
+}
+
+[[nodiscard]] double meanAbsoluteDifference(std::span<const double> first,
+                                            std::span<const double> second) noexcept {
+    assert(first.size() == second.size());
+    double sum = 0.0;
+    for (std::size_t index = 0; index < first.size(); ++index) {
+        sum += std::abs(first[index] - second[index]);
+    }
+    return sum / static_cast<double>(first.size());
+}
+
+[[nodiscard]] double maximumMagnitude(const std::span<const double> values) noexcept {
+    double result = 0.0;
+    for (const double value : values) {
+        result = std::max(result, std::abs(value));
+    }
+    return result;
+}
+
+// Higham's gamma(n) bounds accumulated rounding for n Float32 operations when n*epsilon < 1.
+// It gives each parity case a scale- and work-derived ceiling instead of unrelated literals.
+[[nodiscard]] double floatForwardErrorBound(const std::size_t stepCount,
+                                            const double valueScale,
+                                            const std::size_t operationsPerStep = 32) noexcept {
+    const double epsilon = std::numeric_limits<float>::epsilon();
+    const double operationCount = static_cast<double>(64 + stepCount * operationsPerStep);
+    const double accumulated = operationCount * epsilon;
+    assert(accumulated < 1.0);
+    return std::max(valueScale, 1.0) * accumulated / (1.0 - accumulated);
+}
+
+struct WetMaskDifference final {
+    std::size_t count = 0;
+    double largestDisputedDepth = 0.0;
+};
+
+[[nodiscard]] WetMaskDifference wetMaskDifference(
+    const std::span<const double> reference,
+    const std::span<const double> accelerated,
+    const double minimumWetDepth
+) noexcept {
+    assert(reference.size() == accelerated.size());
+    WetMaskDifference result;
+    for (std::size_t index = 0; index < reference.size(); ++index) {
+        const bool firstWet = reference[index] > minimumWetDepth;
+        const bool secondWet = accelerated[index] > minimumWetDepth;
+        if (firstWet == secondWet) { continue; }
+        ++result.count;
+        result.largestDisputedDepth = std::max(
+            result.largestDisputedDepth,
+            std::max(std::abs(reference[index]), std::abs(accelerated[index])));
+    }
+    return result;
+}
+
+[[nodiscard]] double surfaceProbe(const SimulationState& state,
+                                  const std::size_t column) noexcept {
+    const std::size_t width = state.geometry().width;
+    const std::size_t height = state.geometry().height;
+    assert(column < width);
+    double sum = 0.0;
+    for (std::size_t row = 0; row < height; ++row) {
+        sum += state.bedElevation()(column, row) + state.waterDepth()(column, row);
+    }
+    return sum / static_cast<double>(height);
+}
+
+[[nodiscard]] double hannPeriodogramAmplitude(const std::span<const double> values,
+                                               const std::size_t frequencyBin) noexcept {
+    assert(values.size() > 1);
+    double cosine = 0.0;
+    double sine = 0.0;
+    double weightSum = 0.0;
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        const double phase = 2.0 * std::numbers::pi * static_cast<double>(frequencyBin * index) /
+                             static_cast<double>(values.size());
+        const double window = 0.5 - 0.5 * std::cos(
+            2.0 * std::numbers::pi * static_cast<double>(index) /
+            static_cast<double>(values.size() - 1));
+        cosine += window * values[index] * std::cos(phase);
+        sine += window * values[index] * std::sin(phase);
+        weightSum += window;
+    }
+    return 2.0 * std::hypot(cosine, sine) / weightSum;
 }
 
 [[nodiscard]] bool allFinite(std::span<const double> values) noexcept {
@@ -191,6 +368,629 @@ namespace {
             XCTAssertTrue(solver.diagnostics().finite);
         }
     }
+}
+
+- (void)testMetalBackendPreservesRestStateAndPersistentAllocationCount {
+    constexpr std::size_t size = 16;
+    const SimulationState initialState = makeUnevenLake(size);
+    const BackendState initial = tide::accelerated::exportState(initialState);
+    SolverConfiguration configuration;
+    configuration.workerCount = 1;
+    MetalGPUBackend backend;
+    std::string failureReason;
+    if (!backend.load(initial, configuration, failureReason)) {
+        XCTFail(@"%s", failureReason.c_str());
+        return;
+    }
+    const std::size_t allocationCount = backend.stateSizedAllocationCount();
+    XCTAssertGreaterThan(allocationCount, 0UL);
+    for (std::size_t step = 0; step < 20; ++step) {
+        XCTAssertEqual(backend.stepOnce(0.001, failureReason), StepStatus::success,
+                       @"%s", failureReason.c_str());
+        XCTAssertEqual(backend.stateSizedAllocationCount(), allocationCount);
+    }
+    for (std::size_t snapshotIndex = 0; snapshotIndex < 6; ++snapshotIndex) {
+        const auto snapshot = backend.makeSnapshot(failureReason);
+        XCTAssertEqual(snapshot.waterDepth.size(), size * size);
+        XCTAssertEqual(snapshot.surfaceElevation.size(), size * size);
+        XCTAssertEqual(snapshot.wetMask.size(), size * size);
+        XCTAssertEqual(backend.stateSizedAllocationCount(), allocationCount,
+                       @"snapshot staging must use its warmed-up persistent ring");
+    }
+    const BackendState result = backend.synchronizeToHost(failureReason);
+    XCTAssertTrue(result.isValid(), @"%s", failureReason.c_str());
+    XCTAssertLessThan(maximumDifference(result.waterDepth, initial.waterDepth), 1.0e-6);
+    XCTAssertLessThan(maximumDifference(result.velX, initial.velX), 1.0e-6);
+    XCTAssertLessThan(maximumDifference(result.velY, initial.velY), 1.0e-6);
+    XCTAssertEqualWithAccuracy(result.time, 0.02, 1.0e-12);
+    XCTAssertTrue(backend.diagnostics().finite);
+}
+
+- (void)testMetalBackendTracksCPUReferenceForSmallPerturbation {
+    constexpr std::size_t size = 32;
+    constexpr std::size_t stepCount = 100;
+    constexpr double timeStep = 0.0005;
+    SimulationState cpuState = makeState(size, size, 0.2);
+    SolverConfiguration configuration;
+    configuration.workerCount = 1;
+    configuration.minimumWetDepth = 0.0;
+    configuration.linearDamping = 0.02;
+    WeakNonlinearSolver cpu(cpuState, configuration);
+
+    MetalGPUBackend gpu;
+    std::string failureReason;
+    if (!gpu.load(tide::accelerated::exportState(cpuState), configuration,
+                  failureReason)) {
+        XCTFail(@"%s", failureReason.c_str());
+        return;
+    }
+    for (std::size_t step = 0; step < stepCount; ++step) {
+        XCTAssertEqual(cpu.stepOnce(timeStep), StepStatus::success);
+        XCTAssertEqual(gpu.stepOnce(timeStep, failureReason), StepStatus::success,
+                       @"%s", failureReason.c_str());
+    }
+    const BackendState gpuState = gpu.synchronizeToHost(failureReason);
+    XCTAssertTrue(gpuState.isValid(), @"%s", failureReason.c_str());
+    XCTAssertLessThan(maximumDifference(gpuState.waterDepth,
+                                        cpuState.waterDepth().values()), 2.0e-5);
+    XCTAssertLessThan(maximumDifference(gpuState.velX, cpuState.velX().values()), 2.0e-5);
+    XCTAssertLessThan(maximumDifference(gpuState.velY, cpuState.velY().values()), 2.0e-5);
+    XCTAssertEqualWithAccuracy(gpuState.time, cpuState.time(), 1.0e-12);
+    XCTAssertEqualWithAccuracy(gpu.diagnostics().totalVolume, cpu.diagnostics().totalVolume,
+                               2.0e-4);
+}
+
+- (void)testMPSGraphBackendExecutesCompleteReflectiveSolverWithinFloat32Tolerance {
+    constexpr std::size_t size = 16;
+    constexpr std::size_t stepCount = 40;
+    constexpr double timeStep = 0.0005;
+    SimulationState cpuState = makeUnevenPerturbation(size);
+    SolverConfiguration configuration;
+    configuration.workerCount = 1;
+    configuration.minimumWetDepth = 0.0;
+    configuration.linearDamping = 0.02;
+    WeakNonlinearSolver cpu(cpuState, configuration);
+    MPSGraphAutomaticBackend accelerated;
+    std::string failureReason;
+    XCTAssertTrue(accelerated.load(tide::accelerated::exportState(cpuState), configuration,
+                                   failureReason), @"%s", failureReason.c_str());
+    const std::size_t allocationCount = accelerated.stateSizedAllocationCount();
+    XCTAssertGreaterThan(allocationCount, 0UL);
+    const auto initialFieldBuffers = accelerated.fieldBufferSnapshot();
+    XCTAssertNotEqual(initialFieldBuffers.device, nullptr);
+    XCTAssertNotEqual(initialFieldBuffers.bedElevation, nullptr);
+    XCTAssertNotEqual(initialFieldBuffers.waterDepth, nullptr);
+    for (std::size_t step = 0; step < stepCount; ++step) {
+        XCTAssertEqual(cpu.stepOnce(timeStep), StepStatus::success);
+        XCTAssertEqual(accelerated.stepOnce(timeStep, failureReason), StepStatus::success,
+                       @"step %zu: %s", step, failureReason.c_str());
+        XCTAssertEqual(accelerated.stateSizedAllocationCount(), allocationCount);
+    }
+    XCTAssertGreaterThan(accelerated.fieldBufferSnapshot().generation,
+                         initialFieldBuffers.generation);
+    for (std::size_t snapshotIndex = 0; snapshotIndex < 6; ++snapshotIndex) {
+        const BackendSnapshot snapshot = accelerated.makeSnapshot(failureReason);
+        XCTAssertEqual(snapshot.waterDepth.size(), size * size);
+        XCTAssertEqual(snapshot.surfaceElevation.size(), size * size);
+        XCTAssertEqual(snapshot.surfaceDeviation.size(), size * size);
+        XCTAssertEqual(snapshot.velocityMagnitude.size(), size * size);
+        XCTAssertEqual(snapshot.wetMask.size(), size * size);
+        XCTAssertEqual(accelerated.stateSizedAllocationCount(), allocationCount,
+                       @"MPSGraph snapshots must reuse the three-slot staging ring");
+    }
+    const BackendState result = accelerated.synchronizeToHost(failureReason);
+    XCTAssertTrue(result.isValid(), @"%s", failureReason.c_str());
+    XCTAssertLessThan(meanAbsoluteDifference(result.waterDepth,
+                                             cpuState.waterDepth().values()), 3.0e-6);
+    XCTAssertLessThan(maximumDifference(result.waterDepth,
+                                        cpuState.waterDepth().values()), 8.0e-5);
+    XCTAssertLessThan(maximumDifference(result.velX, cpuState.velX().values()), 1.0e-4);
+    XCTAssertLessThan(maximumDifference(result.velY, cpuState.velY().values()), 1.0e-4);
+    XCTAssertEqualWithAccuracy(result.time, cpuState.time(), 1.0e-12);
+    XCTAssertTrue(accelerated.diagnostics().finite);
+
+    MPSGraphAutomaticBackend cacheProbe;
+    XCTAssertTrue(cacheProbe.load(tide::accelerated::exportState(makeUnevenPerturbation(size)),
+                                  configuration, failureReason), @"%s",
+                  failureReason.c_str());
+    XCTAssertEqual(cacheProbe.status().graphCompileMilliseconds, 0.0,
+                   @"a fixed shape and boundary-type tuple must reuse its compiled graphs");
+}
+
+- (void)testMetalBackendTracksCPUForNonSquareDrivenBoundaryWave {
+    constexpr std::size_t width = 128;
+    constexpr std::size_t height = 64;
+    constexpr std::size_t stepCount = 800;
+    constexpr double timeStep = 0.005;
+    const GridGeometry geometry{width, height, static_cast<double>(width),
+                                static_cast<double>(height)};
+    const std::vector<double> bed(width * height, 0.0);
+    const std::vector<double> depth(width * height, 1.0);
+    BoundaryConfiguration boundaries;
+    boundaries.right = {
+        .type = BoundaryType::drivenHeight,
+        .driven = {
+            .meanSurfaceElevation = 1.0,
+            .amplitude = 0.10,
+            .periodSeconds = 4.0,
+            .phaseRadians = 0.0,
+            .rampSeconds = 1.0,
+        },
+    };
+    SimulationState cpuState;
+    XCTAssertTrue(cpuState.initializeDepth(geometry, bed, depth, {}, boundaries));
+    SolverConfiguration configuration;
+    configuration.workerCount = 1;
+    configuration.minimumWetDepth = 1.0e-8;
+    configuration.linearDamping = 0.02;
+    WeakNonlinearSolver cpu(cpuState, configuration);
+
+    MetalGPUBackend gpu;
+    std::string failureReason;
+    XCTAssertTrue(gpu.load(tide::accelerated::exportState(cpuState), configuration,
+                           failureReason), @"%s", failureReason.c_str());
+    const std::size_t allocationCount = gpu.stateSizedAllocationCount();
+    for (std::size_t step = 0; step < stepCount; ++step) {
+        XCTAssertEqual(cpu.stepOnce(timeStep), StepStatus::success);
+        XCTAssertEqual(gpu.stepOnce(timeStep, failureReason), StepStatus::success,
+                       @"step %zu: %s", step, failureReason.c_str());
+        XCTAssertEqual(gpu.stateSizedAllocationCount(), allocationCount);
+    }
+
+    const BackendState accelerated = gpu.synchronizeToHost(failureReason);
+    XCTAssertTrue(accelerated.isValid(), @"%s", failureReason.c_str());
+    XCTAssertEqualWithAccuracy(accelerated.time, cpuState.time(), 1.0e-12);
+    XCTAssertLessThan(meanAbsoluteDifference(accelerated.waterDepth,
+                                             cpuState.waterDepth().values()), 2.0e-6);
+    XCTAssertLessThan(maximumDifference(accelerated.waterDepth,
+                                        cpuState.waterDepth().values()), 8.0e-5);
+    XCTAssertLessThan(meanAbsoluteDifference(accelerated.velX,
+                                             cpuState.velX().values()), 3.0e-6);
+    XCTAssertLessThan(maximumDifference(accelerated.velX,
+                                        cpuState.velX().values()), 1.0e-4);
+    XCTAssertLessThan(meanAbsoluteDifference(accelerated.velY,
+                                             cpuState.velY().values()), 3.0e-6);
+    XCTAssertLessThan(maximumDifference(accelerated.velY,
+                                        cpuState.velY().values()), 1.0e-4);
+
+    std::size_t wetMaskDifferences = 0;
+    for (std::size_t index = 0; index < accelerated.waterDepth.size(); ++index) {
+        const bool cpuWet = cpuState.waterDepth().values()[index] >
+                            configuration.minimumWetDepth;
+        const bool gpuWet = accelerated.waterDepth[index] > configuration.minimumWetDepth;
+        wetMaskDifferences += cpuWet != gpuWet;
+    }
+    XCTAssertEqual(wetMaskDifferences, 0UL);
+    for (std::size_t edge = 0; edge < boundaryEdgeCount; ++edge) {
+        XCTAssertEqualWithAccuracy(accelerated.cumulativeBoundaryVolume[edge],
+                                   cpuState.cumulativeBoundaryVolume()[edge], 3.0e-4);
+    }
+    // A Float32 tree reduction has O(epsilon * log2(N)) relative summation error.
+    const double reductionLevels = std::ceil(std::log2(static_cast<double>(width * height)));
+    const double diagnosticReductionTolerance =
+        2.0 * std::numeric_limits<float>::epsilon() * reductionLevels *
+        cpu.diagnostics().totalVolume;
+    XCTAssertEqualWithAccuracy(gpu.diagnostics().totalVolume,
+                               cpu.diagnostics().totalVolume,
+                               diagnosticReductionTolerance);
+    XCTAssertLessThanOrEqual(std::abs(gpu.diagnostics().accountingError),
+                             diagnosticReductionTolerance);
+    XCTAssertTrue(gpu.diagnostics().finite);
+}
+
+- (void)testMPSGraphTracksCPUForNonSquareDrivenBoundaryWithDynamicForcing {
+    constexpr std::size_t width = 64;
+    constexpr std::size_t height = 32;
+    constexpr std::size_t stepCount = 160;
+    constexpr double timeStep = 0.005;
+    const GridGeometry geometry{width, height, static_cast<double>(width),
+                                static_cast<double>(height)};
+    const std::vector<double> bed(width * height, 0.0);
+    const std::vector<double> depth(width * height, 1.0);
+    BoundaryConfiguration boundaries;
+    boundaries.right = {
+        .type = BoundaryType::drivenHeight,
+        .driven = {
+            .meanSurfaceElevation = 1.0,
+            .amplitude = 0.03,
+            .periodSeconds = 0.5,
+            .phaseRadians = 0.0,
+            .rampSeconds = 0.1,
+        },
+    };
+    SimulationState cpuState;
+    XCTAssertTrue(cpuState.initializeDepth(geometry, bed, depth, {}, boundaries));
+    SolverConfiguration configuration;
+    configuration.workerCount = 1;
+    configuration.minimumWetDepth = 1.0e-8;
+    configuration.linearDamping = 0.02;
+    WeakNonlinearSolver cpu(cpuState, configuration);
+
+    MPSGraphAutomaticBackend automatic;
+    std::string failureReason;
+    XCTAssertTrue(automatic.load(tide::accelerated::exportState(cpuState), configuration,
+                                 failureReason), @"%s", failureReason.c_str());
+    const std::size_t allocationCount = automatic.stateSizedAllocationCount();
+    bool observedInflow = false;
+    bool observedOutflow = false;
+    for (std::size_t step = 0; step < stepCount; ++step) {
+        XCTAssertEqual(cpu.stepOnce(timeStep), StepStatus::success);
+        XCTAssertEqual(automatic.stepOnce(timeStep, failureReason), StepStatus::success,
+                       @"step %zu: %s", step, failureReason.c_str());
+        XCTAssertEqual(automatic.stateSizedAllocationCount(), allocationCount);
+        const double rate = automatic.diagnostics().instantaneousBoundaryOutflowRate[1];
+        observedInflow = observedInflow || rate < 0.0;
+        observedOutflow = observedOutflow || rate > 0.0;
+    }
+
+    const BackendState accelerated = automatic.synchronizeToHost(failureReason);
+    XCTAssertTrue(accelerated.isValid(), @"%s", failureReason.c_str());
+    XCTAssertEqualWithAccuracy(accelerated.time, cpuState.time(), 1.0e-12);
+    const double depthBound = floatForwardErrorBound(
+        stepCount, maximumMagnitude(cpuState.waterDepth().values()));
+    const double xBound = floatForwardErrorBound(
+        stepCount, maximumMagnitude(cpuState.velX().values()));
+    const double yBound = floatForwardErrorBound(
+        stepCount, maximumMagnitude(cpuState.velY().values()));
+    XCTAssertLessThan(meanAbsoluteDifference(accelerated.waterDepth,
+                                             cpuState.waterDepth().values()), depthBound);
+    XCTAssertLessThan(maximumDifference(accelerated.waterDepth,
+                                        cpuState.waterDepth().values()), depthBound);
+    XCTAssertLessThan(meanAbsoluteDifference(accelerated.velX,
+                                             cpuState.velX().values()), xBound);
+    XCTAssertLessThan(maximumDifference(accelerated.velX,
+                                        cpuState.velX().values()), xBound);
+    XCTAssertLessThan(meanAbsoluteDifference(accelerated.velY,
+                                             cpuState.velY().values()), yBound);
+    XCTAssertLessThan(maximumDifference(accelerated.velY,
+                                        cpuState.velY().values()), yBound);
+    for (std::size_t edge = 0; edge < boundaryEdgeCount; ++edge) {
+        const double boundaryScale = std::max(
+            std::abs(cpuState.cumulativeBoundaryVolume()[edge]), 1.0);
+        const double boundaryBound = floatForwardErrorBound(stepCount, boundaryScale, 16);
+        XCTAssertEqualWithAccuracy(accelerated.cumulativeBoundaryVolume[edge],
+                                   cpuState.cumulativeBoundaryVolume()[edge], boundaryBound);
+    }
+    XCTAssertTrue(observedInflow,
+                  @"the positive reservoir phase must inject through the right face");
+    XCTAssertTrue(observedOutflow,
+                  @"the negative reservoir phase must remove water through the right face");
+    XCTAssertTrue(automatic.diagnostics().finite);
+    XCTAssertGreaterThanOrEqual(automatic.diagnostics().minimumDepth, 0.0);
+}
+
+- (void)testMetalBackendTracksCPUForMovableShoreline128 {
+    constexpr std::size_t size = 128;
+    constexpr std::size_t stepCount = 120;
+    constexpr double timeStep = 0.01;
+    SimulationState cpuState = makeMovableShoreline(size);
+    const std::size_t initialWetCellCount = static_cast<std::size_t>(std::ranges::count_if(
+        cpuState.waterDepth().values(), [](const double depth) { return depth > 1.0e-8; }));
+    SolverConfiguration configuration;
+    configuration.workerCount = 1;
+    configuration.minimumWetDepth = 1.0e-8;
+    configuration.linearDamping = 0.01;
+    WeakNonlinearSolver cpu(cpuState, configuration);
+    MetalGPUBackend accelerated;
+    std::string failureReason;
+    XCTAssertTrue(accelerated.load(tide::accelerated::exportState(cpuState), configuration,
+                                   failureReason), @"%s", failureReason.c_str());
+    const std::size_t allocationCount = accelerated.stateSizedAllocationCount();
+
+    for (std::size_t step = 0; step < stepCount; ++step) {
+        XCTAssertEqual(cpu.stepOnce(timeStep), StepStatus::success);
+        XCTAssertEqual(accelerated.stepOnce(timeStep, failureReason), StepStatus::success,
+                       @"step %zu: %s", step, failureReason.c_str());
+        XCTAssertEqual(accelerated.stateSizedAllocationCount(), allocationCount);
+    }
+    const BackendState result = accelerated.synchronizeToHost(failureReason);
+    XCTAssertTrue(result.isValid(), @"%s", failureReason.c_str());
+    const double depthBound = floatForwardErrorBound(
+        stepCount, maximumMagnitude(cpuState.waterDepth().values()));
+    const double xBound = floatForwardErrorBound(
+        stepCount, maximumMagnitude(cpuState.velX().values()));
+    const double yBound = floatForwardErrorBound(
+        stepCount, maximumMagnitude(cpuState.velY().values()));
+    XCTAssertLessThan(meanAbsoluteDifference(result.waterDepth,
+                                             cpuState.waterDepth().values()), depthBound);
+    XCTAssertLessThan(maximumDifference(result.waterDepth,
+                                        cpuState.waterDepth().values()), depthBound);
+    XCTAssertLessThan(meanAbsoluteDifference(result.velX, cpuState.velX().values()), xBound);
+    XCTAssertLessThan(maximumDifference(result.velX, cpuState.velX().values()), xBound);
+    XCTAssertLessThan(meanAbsoluteDifference(result.velY, cpuState.velY().values()), yBound);
+    XCTAssertLessThan(maximumDifference(result.velY, cpuState.velY().values()), yBound);
+
+    const WetMaskDifference mask = wetMaskDifference(
+        cpuState.waterDepth().values(), result.waterDepth,
+        configuration.minimumWetDepth);
+    XCTAssertLessThanOrEqual(mask.count, size,
+                           @"Float32 may move at most one shoreline contour");
+    XCTAssertLessThanOrEqual(mask.largestDisputedDepth, depthBound,
+                            @"mask disagreements must remain inside the numerical error band");
+    XCTAssertNotEqual(cpu.diagnostics().wetCellCount, initialWetCellCount,
+                      @"the fixture must actually move its shoreline");
+    for (std::size_t edge = 0; edge < boundaryEdgeCount; ++edge) {
+        XCTAssertEqual(result.cumulativeBoundaryVolume[edge], 0.0);
+        XCTAssertEqual(cpuState.cumulativeBoundaryVolume()[edge], 0.0);
+    }
+    const double volumeBound = depthBound * std::sqrt(static_cast<double>(size * size));
+    XCTAssertEqualWithAccuracy(volume(result), volume(cpuState), volumeBound);
+    XCTAssertTrue(accelerated.diagnostics().finite);
+}
+
+- (void)testMetalBackendTracksCPUForBothCoastalWaveScenarios512 {
+    constexpr std::size_t size = 512;
+    for (const bool hasInitialStep : {true, false}) {
+        const std::size_t stepCount = hasInitialStep ? 20 : 100;
+        const double timeStep = hasInitialStep ? 0.01 : 0.005;
+        SimulationState cpuState = makeCoastalWaveState(hasInitialStep);
+        SolverConfiguration configuration;
+        configuration.workerCount = 1;
+        configuration.minimumWetDepth = 1.0e-8;
+        configuration.linearDamping = 0.02;
+        WeakNonlinearSolver cpu(cpuState, configuration);
+        MetalGPUBackend accelerated;
+        std::string failureReason;
+        XCTAssertTrue(accelerated.load(tide::accelerated::exportState(cpuState), configuration,
+                                       failureReason), @"%s", failureReason.c_str());
+        const std::size_t allocationCount = accelerated.stateSizedAllocationCount();
+        for (std::size_t step = 0; step < stepCount; ++step) {
+            XCTAssertEqual(cpu.stepOnce(timeStep), StepStatus::success);
+            XCTAssertEqual(accelerated.stepOnce(timeStep, failureReason), StepStatus::success,
+                           @"scenario=%d step=%zu: %s", hasInitialStep, step,
+                           failureReason.c_str());
+            XCTAssertEqual(accelerated.stateSizedAllocationCount(), allocationCount);
+        }
+        const BackendState result = accelerated.synchronizeToHost(failureReason);
+        XCTAssertTrue(result.isValid(), @"%s", failureReason.c_str());
+        const double depthBound = floatForwardErrorBound(
+            stepCount, maximumMagnitude(cpuState.waterDepth().values()));
+        const double xBound = floatForwardErrorBound(
+            stepCount, maximumMagnitude(cpuState.velX().values()));
+        const double yBound = floatForwardErrorBound(
+            stepCount, maximumMagnitude(cpuState.velY().values()));
+        XCTAssertLessThan(meanAbsoluteDifference(result.waterDepth,
+                                                 cpuState.waterDepth().values()), depthBound);
+        XCTAssertLessThan(maximumDifference(result.waterDepth,
+                                            cpuState.waterDepth().values()), depthBound);
+        XCTAssertLessThan(meanAbsoluteDifference(result.velX,
+                                                 cpuState.velX().values()), xBound);
+        XCTAssertLessThan(maximumDifference(result.velX,
+                                            cpuState.velX().values()), xBound);
+        XCTAssertLessThan(meanAbsoluteDifference(result.velY,
+                                                 cpuState.velY().values()), yBound);
+        XCTAssertLessThan(maximumDifference(result.velY,
+                                            cpuState.velY().values()), yBound);
+        const WetMaskDifference mask = wetMaskDifference(
+            cpuState.waterDepth().values(), result.waterDepth,
+            configuration.minimumWetDepth);
+        XCTAssertLessThanOrEqual(mask.count, size,
+                               @"Float32 may move at most one 512-cell shoreline contour");
+        XCTAssertLessThanOrEqual(mask.largestDisputedDepth, depthBound);
+
+        const double reductionLevels = std::ceil(std::log2(static_cast<double>(size * size)));
+        const double reductionBound = 2.0 * std::numeric_limits<float>::epsilon() *
+            reductionLevels * std::max(volume(cpuState), 1.0);
+        const double stateSummationBound = depthBound * std::sqrt(
+            static_cast<double>(size * size));
+        XCTAssertEqualWithAccuracy(volume(result), volume(cpuState),
+                                   reductionBound + stateSummationBound);
+        for (std::size_t edge = 0; edge < boundaryEdgeCount; ++edge) {
+            const double boundaryScale = std::max(
+                std::abs(cpuState.cumulativeBoundaryVolume()[edge]), 1.0);
+            const double boundaryBound = floatForwardErrorBound(
+                stepCount, boundaryScale, 16);
+            XCTAssertEqualWithAccuracy(result.cumulativeBoundaryVolume[edge],
+                                       cpuState.cumulativeBoundaryVolume()[edge],
+                                       boundaryBound);
+        }
+        if (hasInitialStep) {
+            for (const double boundaryVolume : result.cumulativeBoundaryVolume) {
+                XCTAssertEqual(boundaryVolume, 0.0);
+            }
+        } else {
+            XCTAssertLessThan(cpuState.cumulativeBoundaryVolume()[1], 0.0,
+                              @"the rising right reservoir must inject water through its face");
+            XCTAssertLessThan(result.cumulativeBoundaryVolume[1], 0.0);
+        }
+        XCTAssertTrue(cpu.diagnostics().finite);
+        XCTAssertTrue(accelerated.diagnostics().finite);
+        XCTAssertGreaterThanOrEqual(accelerated.diagnostics().minimumDepth, 0.0);
+    }
+}
+
+- (void)testDrivenWaveArrivalAndDominantPeriodMatchBoundaryForcing {
+    constexpr std::size_t width = 128;
+    constexpr std::size_t height = 64;
+    constexpr double domainWidth = 32.0;
+    constexpr double domainHeight = 16.0;
+    constexpr double forcingAmplitude = 0.10;
+    constexpr double forcingPeriod = 4.0;
+    constexpr double timeStep = 0.01;
+    constexpr std::size_t stepCount = 1'200;
+    const GridGeometry geometry{width, height, domainWidth, domainHeight};
+    const std::vector<double> bed(width * height, 0.0);
+    const std::vector<double> depth(width * height, 1.0);
+    BoundaryConfiguration boundaries;
+    boundaries.right = {
+        .type = BoundaryType::drivenHeight,
+        .driven = {
+            .meanSurfaceElevation = 1.0,
+            .amplitude = forcingAmplitude,
+            .periodSeconds = forcingPeriod,
+            .phaseRadians = 0.0,
+            .rampSeconds = 1.0,
+        },
+    };
+    SimulationState state;
+    XCTAssertTrue(state.initializeDepth(geometry, bed, depth, {}, boundaries));
+    SolverConfiguration configuration;
+    configuration.workerCount = 4;
+    configuration.minimumWetDepth = 1.0e-8;
+    configuration.linearDamping = 0.02;
+    WeakNonlinearSolver solver(state, configuration);
+
+    constexpr double responseThreshold = forcingAmplitude * 0.005;
+    double firstNearRightResponse = std::numeric_limits<double>::infinity();
+    double firstNearLeftResponse = std::numeric_limits<double>::infinity();
+    std::vector<double> spectralWindow;
+    spectralWindow.reserve(800);
+    for (std::size_t step = 0; step < stepCount; ++step) {
+        XCTAssertEqual(solver.stepOnce(timeStep), StepStatus::success);
+        const double nearRight = surfaceProbe(state, width - 8) - 1.0;
+        const double nearLeft = surfaceProbe(state, 8) - 1.0;
+        if (!std::isfinite(firstNearRightResponse) &&
+            std::abs(nearRight) >= responseThreshold) {
+            firstNearRightResponse = state.time();
+        }
+        if (!std::isfinite(firstNearLeftResponse) &&
+            std::abs(nearLeft) >= responseThreshold) {
+            firstNearLeftResponse = state.time();
+        }
+        if (state.time() >= forcingPeriod) {
+            spectralWindow.push_back(nearRight);
+        }
+    }
+    XCTAssertTrue(std::isfinite(firstNearRightResponse));
+    XCTAssertTrue(std::isfinite(firstNearLeftResponse));
+    XCTAssertLessThan(firstNearRightResponse, firstNearLeftResponse,
+                      @"a causal wave must reach the near-boundary probe first");
+
+    const double signalMean = std::reduce(spectralWindow.begin(), spectralWindow.end()) /
+                              static_cast<double>(spectralWindow.size());
+    for (double& value : spectralWindow) { value -= signalMean; }
+    std::size_t dominantBin = 0;
+    double dominantAmplitude = 0.0;
+    for (std::size_t bin = 1; bin <= 8; ++bin) {
+        const double amplitude = hannPeriodogramAmplitude(spectralWindow, bin);
+        if (amplitude > dominantAmplitude) {
+            dominantAmplitude = amplitude;
+            dominantBin = bin;
+        }
+    }
+    const double measuredPeriod = static_cast<double>(spectralWindow.size()) * timeStep /
+                                  static_cast<double>(dominantBin);
+    XCTAssertEqual(dominantBin, 2UL,
+                   @"two forcing cycles occupy the post-ramp eight-second spectrum");
+    XCTAssertEqualWithAccuracy(measuredPeriod, forcingPeriod, 2.0 * timeStep);
+    XCTAssertGreaterThan(dominantAmplitude, forcingAmplitude * 0.5);
+
+    double waveEnergy = 0.0;
+    for (std::size_t index = 0; index < state.waterDepth().size(); ++index) {
+        const double surface = state.bedElevation().values()[index] +
+                               state.waterDepth().values()[index];
+        waveEnergy += (surface - 1.0) * (surface - 1.0);
+    }
+    for (const double velocity : state.velX().values()) { waveEnergy += velocity * velocity; }
+    for (const double velocity : state.velY().values()) { waveEnergy += velocity * velocity; }
+    XCTAssertTrue(std::isfinite(waveEnergy));
+    XCTAssertGreaterThan(waveEnergy, 0.0);
+    XCTAssertTrue(allFinite(state.waterDepth().values()));
+    XCTAssertTrue(allFinite(state.velX().values()));
+    XCTAssertTrue(allFinite(state.velY().values()));
+    XCTAssertGreaterThanOrEqual(solver.diagnostics().minimumDepth, 0.0);
+    XCTAssertLessThanOrEqual(std::abs(solver.diagnostics().accountingError),
+                             conservationTolerance(state));
+}
+
+- (void)testCoastChannel512InitialStepMovesDisturbanceLeft {
+    constexpr std::size_t size = 512;
+    constexpr double baseSurface = 1.20;
+    SimulationState state = makeCoastalWaveState(true);
+    const auto anomalyCentroid = [&state]() {
+        double weight = 0.0;
+        double weightedX = 0.0;
+        for (std::size_t row = 0; row < size; ++row) {
+            for (std::size_t column = 0; column < size; ++column) {
+                const double depth = state.waterDepth()(column, row);
+                if (depth <= 1.0e-8) { continue; }
+                const double anomaly = std::max(
+                    state.bedElevation()(column, row) + depth - baseSurface, 0.0);
+                weight += anomaly;
+                weightedX += anomaly * (static_cast<double>(column) + 0.5);
+            }
+        }
+        return weightedX / weight;
+    };
+    const double initialCentroid = anomalyCentroid();
+    SolverConfiguration configuration;
+    configuration.workerCount = 4;
+    configuration.minimumWetDepth = 1.0e-8;
+    configuration.linearDamping = 0.02;
+    WeakNonlinearSolver solver(state, configuration);
+    for (std::size_t frame = 0; frame < 80; ++frame) {
+        XCTAssertEqual(solver.advance(0.05), StepStatus::success);
+        XCTAssertNotEqual(solver.diagnostics().status, StepStatus::substepLimitReached);
+    }
+    const double evolvedCentroid = anomalyCentroid();
+    XCTAssertLessThan(evolvedCentroid, initialCentroid - 0.1 * state.geometry().dx(),
+                      @"the initial right-hand surface step must propagate inland (left)");
+    XCTAssertTrue(solver.diagnostics().finite);
+    XCTAssertGreaterThanOrEqual(solver.diagnostics().minimumDepth, 0.0);
+    XCTAssertTrue(allFinite(state.waterDepth().values()));
+    XCTAssertTrue(allFinite(state.velX().values()));
+    XCTAssertTrue(allFinite(state.velY().values()));
+}
+
+- (void)testDrivenOceanWave512AlternatesBoundaryFlowAndReachesInterior {
+    constexpr std::size_t size = 512;
+    constexpr double forcingAmplitude = 0.25;
+    SimulationState state = makeCoastalWaveState(false);
+    const std::vector<double> initialBed(state.bedElevation().values().begin(),
+                                         state.bedElevation().values().end());
+    const std::vector<double> initialDepth(state.waterDepth().values().begin(),
+                                           state.waterDepth().values().end());
+    const double initialVolume = volume(state);
+    const auto probeDeviation = [&](const std::size_t column) {
+        double sum = 0.0;
+        std::size_t wetSamples = 0;
+        for (std::size_t row = 0; row < size; ++row) {
+            const std::size_t index = row * size + column;
+            if (initialDepth[index] == 0.0) { continue; }
+            sum += state.bedElevation()(column, row) + state.waterDepth()(column, row) -
+                   (initialBed[index] + initialDepth[index]);
+            ++wetSamples;
+        }
+        return sum / static_cast<double>(wetSamples);
+    };
+    SolverConfiguration configuration;
+    configuration.workerCount = 4;
+    configuration.minimumWetDepth = 1.0e-8;
+    configuration.linearDamping = 0.02;
+    WeakNonlinearSolver solver(state, configuration);
+    double minimumRightOutflowRate = 0.0;
+    double maximumRightOutflowRate = 0.0;
+    double nearBoundaryResponse = 0.0;
+    double interiorResponse = 0.0;
+    for (std::size_t frame = 0; frame < 240; ++frame) {
+        XCTAssertEqual(solver.advance(0.05), StepStatus::success);
+        const double rate = solver.diagnostics().instantaneousBoundaryOutflowRate[1];
+        minimumRightOutflowRate = std::min(minimumRightOutflowRate, rate);
+        maximumRightOutflowRate = std::max(maximumRightOutflowRate, rate);
+        nearBoundaryResponse = std::max(nearBoundaryResponse,
+                                        std::abs(probeDeviation(496)));
+        interiorResponse = std::max(interiorResponse,
+                                    std::abs(probeDeviation(480)));
+    }
+    XCTAssertLessThan(minimumRightOutflowRate, 0.0,
+                      @"negative outward flow proves a driven-reservoir injection phase");
+    XCTAssertGreaterThan(maximumRightOutflowRate, 0.0,
+                         @"positive outward flow proves a driven-reservoir removal phase");
+    XCTAssertGreaterThan(nearBoundaryResponse, forcingAmplitude * 0.1);
+    XCTAssertGreaterThan(interiorResponse, forcingAmplitude * 1.0e-5,
+                         @"a probe 32 cells inland must respond above numerical noise");
+    const double expectedVolume = initialVolume -
+        std::reduce(state.cumulativeBoundaryVolume().begin(),
+                    state.cumulativeBoundaryVolume().end());
+    XCTAssertEqualWithAccuracy(volume(state), expectedVolume,
+                               conservationTolerance(state));
+    XCTAssertEqualWithAccuracy(solver.diagnostics().accountedExpectedVolume,
+                               expectedVolume, conservationTolerance(state));
+    XCTAssertTrue(solver.diagnostics().finite);
+    XCTAssertGreaterThanOrEqual(solver.diagnostics().minimumDepth, 0.0);
+    XCTAssertTrue(allFinite(state.waterDepth().values()));
+    XCTAssertTrue(allFinite(state.velX().values()));
+    XCTAssertTrue(allFinite(state.velY().values()));
 }
 
 - (void)testClosedBoundaryConservationAndFiniteWave {

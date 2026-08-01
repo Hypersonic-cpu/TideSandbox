@@ -1,4 +1,156 @@
 import Foundation
+import Metal
+
+nonisolated final class AcceleratedFieldBuffers: @unchecked Sendable {
+    let device: any MTLDevice
+    let bedElevation: any MTLBuffer
+    let waterDepth: any MTLBuffer
+    let width: Int
+    let height: Int
+    let generation: UInt64
+
+    init(_ source: WSAcceleratedFieldBuffers) {
+        device = source.device
+        bedElevation = source.bedElevation
+        waterDepth = source.waterDepth
+        width = Int(source.width)
+        height = Int(source.height)
+        generation = source.generation
+    }
+}
+
+enum RequestedSimulationBackend: Int, CaseIterable, Identifiable, Sendable {
+    case automaticAccelerated
+    case metalGPU
+    case cpuReference
+
+    var id: Self { self }
+    var title: String {
+        switch self {
+        case .automaticAccelerated: "Automatic Accelerated"
+        case .metalGPU: "Metal GPU"
+        case .cpuReference: "CPU Reference"
+        }
+    }
+
+    nonisolated var bridgeValue: WSRequestedSimulationBackend {
+        switch self {
+        case .automaticAccelerated: .automaticAccelerated
+        case .metalGPU: .metalGPU
+        case .cpuReference: .cpuReference
+        }
+    }
+
+    nonisolated init(_ source: WSRequestedSimulationBackend) {
+        switch source {
+        case .automaticAccelerated: self = .automaticAccelerated
+        case .metalGPU: self = .metalGPU
+        case .cpuReference: self = .cpuReference
+        @unknown default: self = .automaticAccelerated
+        }
+    }
+}
+
+enum ResolvedSimulationBackend: Sendable, Equatable {
+    case mpsGraphAutomatic
+    case metalGPU
+    case cpuReference
+
+    var diagnosticTitle: String {
+        switch self {
+        case .mpsGraphAutomatic: "Apple Automatic (GPU / Neural Engine / CPU)"
+        case .metalGPU: "Metal GPU"
+        case .cpuReference: "CPU Reference"
+        }
+    }
+
+    nonisolated init(_ source: WSResolvedSimulationBackend) {
+        switch source {
+        case .mpsGraphAutomatic: self = .mpsGraphAutomatic
+        case .metalGPU: self = .metalGPU
+        case .cpuReference: self = .cpuReference
+        @unknown default: self = .cpuReference
+        }
+    }
+}
+
+struct SimulationBackendStatus: Sendable, Equatable {
+    let requested: RequestedSimulationBackend
+    let resolved: ResolvedSimulationBackend
+    let isReady: Bool
+    let resolutionReason: String
+    let fallbackReason: String
+    let statePrecision: String
+    let graphCompileMilliseconds: Double
+    let lastStableDtMilliseconds: Double
+    let lastFramePhysicsMilliseconds: Double
+    let lastSubstepMilliseconds: Double
+    let lastReadbackMilliseconds: Double
+    let substepCount: Int
+    let stateSizedAllocationCount: Int
+
+    nonisolated init(_ source: WSBackendStatus) {
+        requested = RequestedSimulationBackend(source.requestedBackend)
+        resolved = ResolvedSimulationBackend(source.resolvedBackend)
+        isReady = source.isReady
+        resolutionReason = source.resolutionReason
+        fallbackReason = source.fallbackReason
+        statePrecision = source.statePrecision
+        graphCompileMilliseconds = source.graphCompileMilliseconds
+        lastStableDtMilliseconds = source.lastStableDtMilliseconds
+        lastFramePhysicsMilliseconds = source.lastFramePhysicsMilliseconds
+        lastSubstepMilliseconds = source.lastSubstepMilliseconds
+        lastReadbackMilliseconds = source.lastReadbackMilliseconds
+        substepCount = Int(source.substepCount)
+        stateSizedAllocationCount = Int(source.stateSizedAllocationCount)
+    }
+
+    nonisolated static let empty = SimulationBackendStatus(
+        requested: .automaticAccelerated,
+        resolved: .cpuReference,
+        isReady: false,
+        resolutionReason: "",
+        fallbackReason: "",
+        statePrecision: "",
+        graphCompileMilliseconds: 0,
+        lastStableDtMilliseconds: 0,
+        lastFramePhysicsMilliseconds: 0,
+        lastSubstepMilliseconds: 0,
+        lastReadbackMilliseconds: 0,
+        substepCount: 0,
+        stateSizedAllocationCount: 0
+    )
+
+    private nonisolated init(
+        requested: RequestedSimulationBackend,
+        resolved: ResolvedSimulationBackend,
+        isReady: Bool,
+        resolutionReason: String,
+        fallbackReason: String,
+        statePrecision: String,
+        graphCompileMilliseconds: Double,
+        lastStableDtMilliseconds: Double,
+        lastFramePhysicsMilliseconds: Double,
+        lastSubstepMilliseconds: Double,
+        lastReadbackMilliseconds: Double,
+        substepCount: Int,
+        stateSizedAllocationCount: Int
+    ) {
+        self.requested = requested
+        self.resolved = resolved
+        self.isReady = isReady
+        self.resolutionReason = resolutionReason
+        self.fallbackReason = fallbackReason
+        self.statePrecision = statePrecision
+        self.graphCompileMilliseconds = graphCompileMilliseconds
+        self.lastStableDtMilliseconds = lastStableDtMilliseconds
+        self.lastFramePhysicsMilliseconds = lastFramePhysicsMilliseconds
+        self.lastSubstepMilliseconds = lastSubstepMilliseconds
+        self.lastReadbackMilliseconds = lastReadbackMilliseconds
+        self.substepCount = substepCount
+        self.stateSizedAllocationCount = stateSizedAllocationCount
+    }
+}
 
 struct EngineDiagnostics: Sendable, Equatable {
     let totalVolume: Double
@@ -116,6 +268,8 @@ struct SimulationSnapshot: Sendable {
     let velocityMagnitude: [Float]
     let wetMask: [UInt8]
     let diagnostics: EngineDiagnostics
+    let backendStatus: SimulationBackendStatus
+    let acceleratedFieldBuffers: AcceleratedFieldBuffers?
 
     nonisolated init(
         generation: UInt64 = 0,
@@ -129,7 +283,9 @@ struct SimulationSnapshot: Sendable {
         surfaceDeviation: [Float],
         velocityMagnitude: [Float],
         wetMask: [UInt8],
-        diagnostics: EngineDiagnostics
+        diagnostics: EngineDiagnostics,
+        backendStatus: SimulationBackendStatus = .empty,
+        acceleratedFieldBuffers: AcceleratedFieldBuffers? = nil
     ) {
         self.generation = generation
         self.width = width
@@ -143,6 +299,8 @@ struct SimulationSnapshot: Sendable {
         self.velocityMagnitude = velocityMagnitude
         self.wetMask = wetMask
         self.diagnostics = diagnostics
+        self.backendStatus = backendStatus
+        self.acceleratedFieldBuffers = acceleratedFieldBuffers
     }
 
     nonisolated init(_ source: WSEngineSnapshot) {
@@ -159,6 +317,8 @@ struct SimulationSnapshot: Sendable {
         velocityMagnitude = source.velocityMagnitude.floatArray(count: count)
         wetMask = Array(source.wetMask.prefix(count))
         diagnostics = EngineDiagnostics(source.diagnostics)
+        backendStatus = SimulationBackendStatus(source.backendStatus)
+        acceleratedFieldBuffers = source.acceleratedFieldBuffers.map(AcceleratedFieldBuffers.init)
     }
 
     static let empty = SimulationSnapshot(
@@ -188,7 +348,9 @@ struct SimulationSnapshot: Sendable {
             surfaceDeviation: surfaceDeviation,
             velocityMagnitude: velocityMagnitude,
             wetMask: wetMask,
-            diagnostics: diagnostics
+            diagnostics: diagnostics,
+            backendStatus: backendStatus,
+            acceleratedFieldBuffers: acceleratedFieldBuffers
         )
     }
 

@@ -50,7 +50,10 @@ nonisolated final class SimulationRuntime: @unchecked Sendable {
     private var playbackSpeed = 1.0
     private var isShutDown = false
 
-    init(seed: SceneSeed) {
+    init(
+        seed: SceneSeed,
+        requestedBackend: RequestedSimulationBackend = .automaticAccelerated
+    ) {
         engine = WSWaterEngineBridge(
             width: UInt(seed.width),
             height: UInt(seed.height),
@@ -68,6 +71,9 @@ nonisolated final class SimulationRuntime: @unchecked Sendable {
             maximumSurface: seed.worldLimits.maximumSurfaceElevation,
             boundaries: seed.boundaries.bridgeConfiguration
         )
+        if requestedBackend != .automaticAccelerated {
+            _ = engine.setRequestedBackend(requestedBackend.bridgeValue)
+        }
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: 1.0 / 60.0, leeway: .milliseconds(2))
         timer.setEventHandler { [weak self] in self?.tick() }
@@ -173,6 +179,17 @@ nonisolated final class SimulationRuntime: @unchecked Sendable {
             engine.isRunning = false
             activeBrush = nil
             _ = engine.setBoundaryConfiguration(configuration.bridgeConfiguration)
+            lastTick = .now()
+            publishSnapshot()
+        }
+    }
+
+    func updateRequestedBackend(_ backend: RequestedSimulationBackend) {
+        queue.async { [weak self] in
+            guard let self, !isShutDown else { return }
+            engine.isRunning = false
+            activeBrush = nil
+            _ = engine.setRequestedBackend(backend.bridgeValue)
             lastTick = .now()
             publishSnapshot()
         }
