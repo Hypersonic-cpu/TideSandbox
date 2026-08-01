@@ -470,3 +470,39 @@ Focused automated annotation UI test:     1/1 passed
 CPU golden fingerprint review:           passed; hashes unchanged
 git diff --check:                         passed
 ```
+
+## 2026-08-01 — Accelerated SWE and configurable flow boundaries
+
+- Added four independent reflective, free/open, and driven-height reservoir
+  boundaries to the CPU oracle. Non-reflective sides carry real signed face
+  flux, use outward-positive per-side integration, and close the volume oracle
+  with explicit edit-water volume. Persistence migrates absent sides to
+  reflective and rejects unknown or invalid forcing.
+- Rebuilt the 512² coast stress scene with exposed terrain, a wet channel, and
+  an elevated right-band surface. Added the distinct 512² driven-ocean scene
+  with a ramped 8-second right-boundary wave; the built-in generator remains
+  authoritative for package data.
+- Added complete `Float32` MPSGraph and Metal solvers behind the concrete
+  `std::variant<CpuBackend, MPSGraphAutomaticBackend, MetalGPUBackend>`. Both
+  use persistent device state, ping-pong fields, device reductions, the full
+  boundary contract, staging rings, truthful failures, and last-valid-state
+  fallback. The CPU `double` solver remains selectable and authoritative.
+- Kept accelerated buffers authoritative during playback and passed the active
+  Metal bed/depth buffers directly to 3D rendering. Paused edits synchronize
+  once through the existing `TerrainEditor`, upload once, and resume after a
+  fresh CFL calculation. The inactive viewport still performs zero work.
+- Enabled persisted/default Automatic selection, explicit CPU/Metal selection,
+  resolved status and reason, four-side controls, and compact flow diagnostics.
+  Apple9 uses the measured dimension-generic workload threshold and prefers
+  Metal above it. Public diagnostics do not assert Neural Engine execution.
+- Archived the architecture in `AcceleratedSWE.md` and the complete target
+  sweep in `AcceleratedBenchmark_2026-08-01.csv`. The accepted Release result
+  reaches 2.01× at 384² and 2.26× at 512²; further tuning stopped after the
+  functional and performance targets were met.
+
+Interactive validation exception: unit tests, offscreen Metal parity, and
+renderer resource tests validate numerical and data paths, but only the focused
+signed 512² orbit/zoom XCUITest can validate real `MTKView` drawable composition
+and AppKit pointer capture. That automated scenario and its retained visual
+capture were already completed during the 3D delivery recorded above; no full
+interactive suite or manual mouse operation was used for this stage.

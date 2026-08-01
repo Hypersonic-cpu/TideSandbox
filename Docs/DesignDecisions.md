@@ -194,3 +194,55 @@ neutral overlay layer. Committed bed/depth changes come only from Engine
 snapshots; unchanged grid dimensions reuse topology, allocation, pipelines, and
 camera. `SimulationViewport` remains a real switch, with DEBUG-only counters
 proving the inactive renderer performs no work.
+
+## DD-017 — Accelerated solvers are concrete values behind one variant
+
+The bridge owns `CpuBackend`, `MPSGraphAutomaticBackend`, or `MetalGPUBackend`
+in one `std::variant`. The domain has three closed implementations with shared
+state semantics, not an extensible runtime plugin family, so virtual dispatch
+would add ownership ambiguity without useful substitutability. Each final type
+implements the complete operation set and owns its natural precision and
+resources. X- and Y-face velocity remain the same field type in the reference
+state and the same scalar/buffer representation in accelerated state.
+
+Accelerated state is authoritative while playing. A switch is an atomic paused
+state transition that exports and imports initial/current fields, time, forcing,
+edit accounting, and per-side boundary volumes. This makes fallback behavior a
+state-contract decision rather than a renderer or queue implementation detail.
+
+## DD-018 — Automatic selection is workload- and measurement-driven
+
+The selection key is `8 * cells + 6 * faces`, never a named dimension. The M4
+Release sweep brackets CPU/Metal break-even between 128² and 256², so Apple9
+uses 1,000,000 work units and prefers Metal above it. Unknown families use the
+first validated accelerated sample, 1,313,792 units, and retain MPSGraph-first
+ordering until measured.
+
+MPSGraph remains a complete level-1 executable path and fallback, but it was
+slower than Metal in the target sweep. Diagnostics report the resolved path and
+reason. They do not assert Neural Engine placement because no reliable runtime
+evidence is available.
+
+## DD-019 — Non-reflective boundaries are reservoir faces
+
+Free/open and driven-height boundaries participate in pressure, damping, CFL,
+donor upwinding, limiting, continuity, and dry-face cleanup through the actual
+outer staggered face. A shared oriented convention maps all four global sides
+to outward-positive flow. Interior water budgets limit outward flow; external
+reservoir inflow is not incorrectly limited by an interior donor.
+
+The volume oracle is therefore `initial + edits - cumulative outward boundary
+volume`, with the latter integrated only from final limited face flux. Directly
+modifying a boundary-adjacent cell would bypass this contract and is forbidden.
+
+## DD-020 — Persistent device state crosses directly into 3D rendering
+
+Metal and MPSGraph own persistent geometry-derived state, ping-pong, scratch,
+reduction, and staging resources. No state-sized allocation occurs after
+warm-up. Snapshot readback remains cadence-limited for compatibility and 2D,
+while active 3D receives the existing Metal bed/depth buffers plus a generation
+token. CPU mode retains the immutable snapshot upload path.
+
+Editing and saving are explicit host-synchronization boundaries. This preserves
+the authoritative CPU `TerrainEditor` semantics while preventing per-substep
+round trips or hidden renderer ownership of simulation data.

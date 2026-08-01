@@ -126,3 +126,37 @@ swiftc -O -module-cache-path /tmp/tide-swift-module-cache \
   Tools/BenchmarkRenderer.swift -o /tmp/tide_renderer_benchmark
 /tmp/tide_renderer_benchmark
 ```
+
+## 2026-08-01 — Automatic accelerated SWE Release sweep
+
+Target: MacBook Air, Apple M4 (10 CPU cores, 10 GPU cores), 16 GB, macOS
+26.5.2, Metal family Apple9. The standalone C++/Objective-C++ benchmark used
+C++20, `-O3 -DNDEBUG`, ARC, and
+`-Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror`. Each row is the
+median of five measured repetitions after 20 warm-up steps. Physics time
+includes stable-dt reduction and the complete numerical substep; snapshot
+readback and direct 3D handoff are reported separately. The full machine-readable
+archive is `AcceleratedBenchmark_2026-08-01.csv`.
+
+| Grid | CPU step | Metal step | Automatic | Auto speedup | Snapshot | Direct 3D handoff |
+|---|---:|---:|---|---:|---:|---:|
+| 64² | 0.1541 ms | 0.4493 ms | CPU, 0.1617 ms | 0.95× | 0.0106 ms | 0.000013 ms |
+| 128² | 0.3794 ms | 0.4457 ms | CPU, 0.3715 ms | 1.02× | 0.0315 ms | 0.000012 ms |
+| 256² | 0.7495 ms | 0.5265 ms | Metal, 0.5232 ms | 1.43× | 0.3888 ms | 0.000073 ms |
+| 384² | 1.4328 ms | 0.7255 ms | Metal, 0.7120 ms | 2.01× | 0.5711 ms | 0.000072 ms |
+| 512² | 2.3879 ms | 1.1134 ms | Metal, 1.0580 ms | 2.26× | 1.0424 ms | 0.000071 ms |
+| 256×512 | 1.2644 ms | 0.6690 ms | Metal, 0.6554 ms | 1.93× | 0.4933 ms | 0.000072 ms |
+
+Break-even is bracketed by the 128² and 256² samples. The classifier uses
+`8 * cells + 6 * faces`; Apple9 therefore uses a conservative rounded threshold
+of 1,000,000 work units. MPSGraph was slower than Metal across the accelerated
+samples, so Apple9 Automatic selects Metal above the threshold. Unknown device
+families retain the conservative 1,313,792-work threshold and MPSGraph-first
+capability order until measured. No rule contains a 512 dimension literal.
+
+The warmed Metal backend owned 30 state-sized persistent allocations at every
+sample and the allocation count stayed constant after warm-up. Direct handoff
+consumes existing device buffers; it does not include CPU snapshot readback or
+re-upload. The accepted implementation exceeds 2× on representative 384² and
+512² workloads. Further tuning was stopped because the functional target and
+performance gate were satisfied.

@@ -4,23 +4,28 @@
 > Model: existing weakly nonlinear staggered-grid SWE only  
 > Default requested backend: `Automatic Accelerated`  
 > Reference backend: existing multithreaded double-precision CPU solver
+>
+> **Status: Complete — 2026-08-01.** Implementation, scientific tests, design
+> decisions, and target benchmark evidence are archived in
+> `AcceleratedSWE.md`, `DesignDecisions.md`, `ProgressLog.md`,
+> `BenchmarkLog.md`, and `AcceleratedBenchmark_2026-08-01.csv`.
 
 ## 0. Hard constraints
 
-- [ ] Preserve the current equations, hydrostatic connected-depth shoreline reconstruction, MAC layout, donor upwinding, outgoing limiter, editing semantics, 2D/3D shared state, and active-viewport-only rendering.
-- [ ] Do not migrate to full conservative SWE and do not add nonlinear velocity advection.
-- [ ] Keep `TideSandbox/Engine` pure C++ (`.cc/.hh`). Put Metal, MPSGraph, Objective-C++, and Apple-framework code outside `Engine`.
-- [ ] Keep the existing CPU solver as the numerical oracle and selectable fallback.
-- [ ] Accelerated state may use `Float32`; CPU reference remains `double`.
-- [ ] `Automatic Accelerated` is the application default. It resolves from grid/workload size, device capabilities, backend readiness, and measured break-even data; it may choose MPSGraph automatic placement, Metal GPU, or CPU fallback, and must expose the resolved backend and reason.
-- [ ] Do not expose a fake “force ANE” option. MPSGraph optimization level 1 may place supported graph regions across GPU, Neural Engine, and CPU; placement is controlled by Apple.
-- [ ] Non-reflective boundaries are real mass-flow boundaries. Never emulate them by modifying interior cell depth directly.
-- [ ] All boundary volume changes must be accounted from signed face flux integrated over time.
-- [ ] Default verification is non-interactive. Do not start XCUITest or seize mouse/keyboard control unless a requirement cannot be validated by unit tests, offscreen Metal, view-model tests, or accessibility-free launch tests.
-- [ ] Do not repeat or redesign the completed terrain-editing, 2D decorative rendering, or 3D editing work.
-- [ ] Treat Sections 1–9 as requirements, not as separate execution stages. Sol must implement adjacent requirements together when they share data structures or hot paths.
-- [ ] Do not stop, summarize, request confirmation, or create a commit after every subsection. Complete one macro stage, run its focused gate, then continue.
-- [ ] Prefer end-to-end vertical slices over placeholder APIs: a backend or boundary feature is not complete until its state, runtime integration, diagnostics, persistence/UI where applicable, and focused tests work together.
+- [x] Preserve the current equations, hydrostatic connected-depth shoreline reconstruction, MAC layout, donor upwinding, outgoing limiter, editing semantics, 2D/3D shared state, and active-viewport-only rendering.
+- [x] Do not migrate to full conservative SWE and do not add nonlinear velocity advection.
+- [x] Keep `TideSandbox/Engine` pure C++ (`.cc/.hh`). Put Metal, MPSGraph, Objective-C++, and Apple-framework code outside `Engine`.
+- [x] Keep the existing CPU solver as the numerical oracle and selectable fallback.
+- [x] Accelerated state may use `Float32`; CPU reference remains `double`.
+- [x] `Automatic Accelerated` is the application default. It resolves from grid/workload size, device capabilities, backend readiness, and measured break-even data; it may choose MPSGraph automatic placement, Metal GPU, or CPU fallback, and must expose the resolved backend and reason.
+- [x] Do not expose a fake “force ANE” option. MPSGraph optimization level 1 may place supported graph regions across GPU, Neural Engine, and CPU; placement is controlled by Apple.
+- [x] Non-reflective boundaries are real mass-flow boundaries. Never emulate them by modifying interior cell depth directly.
+- [x] All boundary volume changes must be accounted from signed face flux integrated over time.
+- [x] Default verification is non-interactive. Do not start XCUITest or seize mouse/keyboard control unless a requirement cannot be validated by unit tests, offscreen Metal, view-model tests, or accessibility-free launch tests.
+- [x] Do not repeat or redesign the completed terrain-editing, 2D decorative rendering, or 3D editing work.
+- [x] Treat Sections 1–9 as requirements, not as separate execution stages. Sol must implement adjacent requirements together when they share data structures or hot paths.
+- [x] Do not stop, summarize, request confirmation, or create a commit after every subsection. Complete one macro stage, run its focused gate, then continue.
+- [x] Prefer end-to-end vertical slices over placeholder APIs: a backend or boundary feature is not complete until its state, runtime integration, diagnostics, persistence/UI where applicable, and focused tests work together.
 
 ## 1. Target architecture
 
@@ -408,16 +413,16 @@ Reject non-finite driven values before dispatch.
 
 ## 4. CPU reference boundary implementation
 
-- [ ] Replace hard-coded zero values at `velX(0,*)`, `velX(width,*)`, `velY(*,0)`, and `velY(*,height)` with boundary-type handling.
-- [ ] Compute boundary pressure update before damping.
-- [ ] Compute boundary fluxes before outgoing-scale calculation.
-- [ ] Include boundary outflow in the adjacent cell's outgoing-depth estimate.
-- [ ] Apply interior donor limiter only to outward boundary flux.
-- [ ] Keep reflective behavior bit-compatible where practical.
-- [ ] Update dry-face cleanup for boundary reservoir connectivity.
-- [ ] Accumulate signed boundary volume after final limited boundary flux is known.
-- [ ] Update diagnostics and volume oracle.
-- [ ] Add CPU tests before implementing accelerated boundaries.
+- [x] Replace hard-coded zero values at `velX(0,*)`, `velX(width,*)`, `velY(*,0)`, and `velY(*,height)` with boundary-type handling.
+- [x] Compute boundary pressure update before damping.
+- [x] Compute boundary fluxes before outgoing-scale calculation.
+- [x] Include boundary outflow in the adjacent cell's outgoing-depth estimate.
+- [x] Apply interior donor limiter only to outward boundary flux.
+- [x] Keep reflective behavior bit-compatible where practical.
+- [x] Update dry-face cleanup for boundary reservoir connectivity.
+- [x] Accumulate signed boundary volume after final limited boundary flux is known.
+- [x] Update diagnostics and volume oracle.
+- [x] Add CPU tests before implementing accelerated boundaries.
 
 Do not proceed to accelerated boundary kernels until CPU tests pass.
 
@@ -1201,18 +1206,18 @@ A stage may use fewer commits when changes are inseparable. Do not create commit
 
 ## 12. Definition of Done
 
-- [ ] `Automatic Accelerated` is the saved/default requested backend.
-- [ ] CPU reference remains selectable and mathematically authoritative.
-- [ ] Representative medium/large workloads above the measured break-even threshold resolve to an accelerated backend on the target supported Apple Silicon machine; no exact `512×512` check controls backend selection.
-- [ ] No public UI or diagnostic falsely asserts ANE usage.
-- [ ] Four boundaries are independently configurable as reflective, free/open, or driven height.
-- [ ] Free and driven boundaries carry real signed mass flux.
-- [ ] Domain volume change matches integrated boundary flux plus explicit edit volume.
-- [ ] Driven right-boundary waves enter the domain through the boundary face, not an interior source.
-- [ ] Updated `coastChannel512` contains exposed terrain and a rightmost-one-fifth elevated initial surface.
-- [ ] `drivenOceanWave512` produces continuous right-boundary wave forcing.
-- [ ] Accelerated and CPU states remain within locked Float32 parity tolerances.
-- [ ] No negative depth, non-finite state, stale-CFL resume, or substep-limit regression.
-- [ ] Accelerated substeps allocate no state-sized buffers after warm-up.
-- [ ] Accelerated kernels, dispatch, reductions, buffer ownership, and backend selection contain no exact-size specialization for `512×512`; 512² is only a scenario and benchmark point.
-- [ ] Interactive automation was not used unless explicitly justified as unavoidable.
+- [x] `Automatic Accelerated` is the saved/default requested backend.
+- [x] CPU reference remains selectable and mathematically authoritative.
+- [x] Representative medium/large workloads above the measured break-even threshold resolve to an accelerated backend on the target supported Apple Silicon machine; no exact `512×512` check controls backend selection.
+- [x] No public UI or diagnostic falsely asserts ANE usage.
+- [x] Four boundaries are independently configurable as reflective, free/open, or driven height.
+- [x] Free and driven boundaries carry real signed mass flux.
+- [x] Domain volume change matches integrated boundary flux plus explicit edit volume.
+- [x] Driven right-boundary waves enter the domain through the boundary face, not an interior source.
+- [x] Updated `coastChannel512` contains exposed terrain and a rightmost-one-fifth elevated initial surface.
+- [x] `drivenOceanWave512` produces continuous right-boundary wave forcing.
+- [x] Accelerated and CPU states remain within locked Float32 parity tolerances.
+- [x] No negative depth, non-finite state, stale-CFL resume, or substep-limit regression.
+- [x] Accelerated substeps allocate no state-sized buffers after warm-up.
+- [x] Accelerated kernels, dispatch, reductions, buffer ownership, and backend selection contain no exact-size specialization for `512×512`; 512² is only a scenario and benchmark point.
+- [x] Interactive automation was not used unless explicitly justified as unavoidable.

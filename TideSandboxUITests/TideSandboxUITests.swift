@@ -48,6 +48,7 @@ final class TideSandboxUITests: XCTestCase {
             ("32 × 32 Center Bump", "32 × 32"),
             ("128 × 128 Uneven Bed", "128 × 128"),
             ("512 × 512 Coast Channel", "512 × 512"),
+            ("512 × 512 Driven Ocean Wave", "512 × 512"),
         ]
         for (title, dimensions) in presets {
             picker.click()

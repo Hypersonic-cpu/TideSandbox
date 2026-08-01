@@ -58,7 +58,7 @@ enum ResolvedSimulationBackend: Sendable, Equatable {
 
     var diagnosticTitle: String {
         switch self {
-        case .mpsGraphAutomatic: "Apple Automatic (GPU / Neural Engine / CPU)"
+        case .mpsGraphAutomatic: "MPSGraph GPU"
         case .metalGPU: "Metal GPU"
         case .cpuReference: "CPU Reference"
         }
