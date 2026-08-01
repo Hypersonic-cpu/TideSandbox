@@ -42,11 +42,26 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
     private var minimumWetDepth: Float = 1.0e-6
     private var hasFittedCamera = false
     private var pendingCameraState: OrbitCameraState?
+    private var latestSnapshot: SimulationSnapshot?
     private(set) var snapshotGeneration: UInt64 = .max
     private(set) var drawableSize: CGSize = .zero
     var onCameraChange: ((OrbitCameraState, CameraChangeReason) -> Void)?
 
     var cameraState: OrbitCameraState { orbitCamera.state }
+    var topologyRebuildCount: Int { resourceTracker.rebuildCount }
+
+    func currentScalarValues() -> (bedElevation: [Float], waterDepth: [Float])? {
+        guard let mesh, !scalarBufferSets.isEmpty else { return nil }
+        let activeBuffers = scalarBufferSets[activeScalarBufferIndex]
+        let bedPointer = activeBuffers.bedElevation.contents()
+            .bindMemory(to: Float.self, capacity: mesh.vertexCount)
+        let depthPointer = activeBuffers.waterDepth.contents()
+            .bindMemory(to: Float.self, capacity: mesh.vertexCount)
+        return (
+            Array(UnsafeBufferPointer(start: bedPointer, count: mesh.vertexCount)),
+            Array(UnsafeBufferPointer(start: depthPointer, count: mesh.vertexCount))
+        )
+    }
 
     init?(view: MTKView) {
         guard let device = view.device,
@@ -138,6 +153,7 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
     }
 
     func update(snapshot: SimulationSnapshot) {
+        ViewportRenderActivity.recordMetalSnapshotUpdate()
         guard snapshot.generation != snapshotGeneration else { return }
         guard let counts = try? HeightFieldMesh.validatedCounts(
             width: snapshot.width,
@@ -185,6 +201,7 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
         maximumAbsoluteElevation = statistics.maximumAbsoluteElevation
         domainWidth = newDomainWidth
         domainHeight = newDomainHeight
+        latestSnapshot = snapshot
         if dimensionsChanged {
             pendingCameraState = nil
             _ = fitCamera()
@@ -250,6 +267,102 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
         minimumWetDepth = value.isFinite && value >= 0 ? value : 0
     }
 
+    func physicalPoint(at viewPoint: CGPoint, drawableSize: CGSize) -> CGPoint? {
+        guard let latestSnapshot,
+              let context = HeightFieldPickContext(
+                snapshot: latestSnapshot,
+                verticalScale: settings.verticalScale,
+                renderBias: settings.renderBias,
+                minimumWetDepth: minimumWetDepth
+              ) else { return nil }
+        return HeightFieldPicker.physicalPoint(
+            at: viewPoint,
+            drawableSize: drawableSize,
+            viewProjection: orbitCamera.matrices().viewProjection,
+            context: context
+        )
+    }
+
+    func project(physicalPoint: CGPoint) -> CGPoint? {
+        guard let latestSnapshot,
+              let worldHeight = visibleWorldHeight(
+                at: physicalPoint,
+                snapshot: latestSnapshot
+              ) else { return nil }
+        let world = SIMD3<Float>(
+            Float(physicalPoint.x - latestSnapshot.domainWidth * 0.5),
+            worldHeight,
+            Float(physicalPoint.y - latestSnapshot.domainHeight * 0.5)
+        )
+        return project(worldPoint: world)
+    }
+
+    func projectedBrushOutline(
+        center: CGPoint,
+        radius: Double,
+        segmentCount: Int = 64
+    ) -> [CGPoint] {
+        guard let latestSnapshot,
+              radius.isFinite,
+              radius > 0,
+              segmentCount >= 8,
+              let worldHeight = visibleWorldHeight(at: center, snapshot: latestSnapshot) else {
+            return []
+        }
+        let domainWidth = latestSnapshot.domainWidth
+        let domainHeight = latestSnapshot.domainHeight
+        return (0...segmentCount).compactMap { segment -> CGPoint? in
+            let angle = Double(segment) / Double(segmentCount) * 2 * Double.pi
+            let physicalX = center.x + cos(angle) * radius
+            let physicalY = center.y + sin(angle) * radius
+            guard physicalX >= 0, physicalX <= domainWidth,
+                  physicalY >= 0, physicalY <= domainHeight else { return nil }
+            return project(worldPoint: SIMD3<Float>(
+                Float(physicalX - domainWidth * 0.5),
+                worldHeight,
+                Float(physicalY - domainHeight * 0.5)
+            ))
+        }
+    }
+
+    private func visibleWorldHeight(
+        at physicalPoint: CGPoint,
+        snapshot: SimulationSnapshot
+    ) -> Float? {
+        guard physicalPoint.x.isFinite,
+              physicalPoint.y.isFinite,
+              physicalPoint.x >= 0,
+              physicalPoint.x <= snapshot.domainWidth,
+              physicalPoint.y >= 0,
+              physicalPoint.y <= snapshot.domainHeight else { return nil }
+        let column = min(max(Int(physicalPoint.x / snapshot.domainWidth *
+                                 Double(snapshot.width)), 0), snapshot.width - 1)
+        let row = min(max(Int(physicalPoint.y / snapshot.domainHeight *
+                              Double(snapshot.height)), 0), snapshot.height - 1)
+        let index = row * snapshot.width + column
+        guard snapshot.bedElevation.indices.contains(index),
+              snapshot.waterDepth.indices.contains(index) else { return nil }
+        let bed = snapshot.bedElevation[index]
+        let depth = snapshot.waterDepth[index]
+        guard bed.isFinite, depth.isFinite else { return nil }
+        let isWet = depth > minimumWetDepth
+        let elevation = isWet ? bed + max(depth, 0) : bed
+        return elevation * settings.verticalScale + (isWet ? settings.renderBias : 0)
+    }
+
+    private func project(worldPoint world: SIMD3<Float>) -> CGPoint? {
+        guard drawableSize.width > 0, drawableSize.height > 0 else { return nil }
+        let clip = orbitCamera.matrices().viewProjection * SIMD4<Float>(world, 1)
+        guard clip.w.isFinite, clip.w > Float.leastNonzeroMagnitude else { return nil }
+        let normalized = clip / clip.w
+        guard normalized.x.isFinite, normalized.y.isFinite,
+              abs(normalized.x) <= 1.1, abs(normalized.y) <= 1.1 else { return nil }
+        return CGPoint(
+            x: CGFloat((normalized.x + 1) * 0.5) * drawableSize.width,
+            y: CGFloat((normalized.y + 1) * 0.5) * drawableSize.height
+        )
+    }
+
     func setSettings(_ requestedSettings: Render3DSettings) {
         var newSettings = requestedSettings
         newSettings.verticalScale = min(max(
@@ -286,6 +399,7 @@ final class HeightFieldRenderer: NSObject, MTKViewDelegate {
     }
 
     func draw(in view: MTKView) {
+        ViewportRenderActivity.recordMetalDraw()
         guard let passDescriptor = view.currentRenderPassDescriptor,
               let drawable = view.currentDrawable,
               let commandBuffer = commandQueue.makeCommandBuffer(),

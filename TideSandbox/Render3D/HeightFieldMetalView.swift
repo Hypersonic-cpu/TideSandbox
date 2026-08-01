@@ -11,6 +11,14 @@ struct HeightFieldMetalView: NSViewRepresentable {
     let cameraFitRequestID: UInt64
     let minimumWetDepth: Float
     let settings: Render3DSettings
+    let terrainTool: TerrainTool
+    let brushPreviewPoint: CGPoint?
+    let brushRadius: Double
+    let polygonPoints: [CGPoint]
+    let onBrushBegin: (CGPoint) -> Void
+    let onBrushMove: (CGPoint) -> Void
+    let onBrushEnd: () -> Void
+    let onPolygonPoint: (CGPoint) -> Void
     let onCameraChange: (OrbitCameraState, CameraChangeReason) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -28,6 +36,14 @@ struct HeightFieldMetalView: NSViewRepresentable {
         view.framebufferOnly = true
         view.autoResizeDrawable = true
         view.preferredFramesPerSecond = 60
+        view.terrainTool = terrainTool
+        view.brushPreviewPoint = brushPreviewPoint
+        view.brushRadius = brushRadius
+        view.polygonPoints = polygonPoints
+        view.onBrushBegin = onBrushBegin
+        view.onBrushMove = onBrushMove
+        view.onBrushEnd = onBrushEnd
+        view.onPolygonPoint = onPolygonPoint
         Self.configureFramePacing(view, isPlaying: isPlaying)
         view.clearColor = MTLClearColor(red: 0.075, green: 0.09, blue: 0.11, alpha: 1)
 
@@ -51,12 +67,21 @@ struct HeightFieldMetalView: NSViewRepresentable {
                 onCameraChange
             )
             view.renderer = renderer
+            view.updatePreviewOverlay()
         }
         return view
     }
 
     func updateNSView(_ view: InteractiveMTKView, context: Context) {
         Self.configureFramePacing(view, isPlaying: isPlaying)
+        view.terrainTool = terrainTool
+        view.brushPreviewPoint = brushPreviewPoint
+        view.brushRadius = brushRadius
+        view.polygonPoints = polygonPoints
+        view.onBrushBegin = onBrushBegin
+        view.onBrushMove = onBrushMove
+        view.onBrushEnd = onBrushEnd
+        view.onPolygonPoint = onPolygonPoint
         let renderer = context.coordinator.renderer
         renderer?.setMinimumWetDepth(minimumWetDepth)
         if context.coordinator.lastInspectorYawDegrees != cameraYawDegrees ||
@@ -70,6 +95,7 @@ struct HeightFieldMetalView: NSViewRepresentable {
         }
         renderer?.setSettings(settings)
         renderer?.update(snapshot: snapshot)
+        view.updatePreviewOverlay()
         if context.coordinator.lastCameraFitRequestID != cameraFitRequestID {
             context.coordinator.lastCameraFitRequestID = cameraFitRequestID
             renderer?.fitCameraToDomain(reportChange: false)
@@ -120,24 +146,76 @@ struct HeightFieldMetalView: NSViewRepresentable {
 
 final class InteractiveMTKView: MTKView {
     weak var renderer: HeightFieldRenderer?
+    var terrainTool: TerrainTool = .inspect
+    var brushPreviewPoint: CGPoint? { didSet { updatePreviewOverlay() } }
+    var brushRadius: Double = 1 { didSet { updatePreviewOverlay() } }
+    var polygonPoints = [CGPoint]() { didSet { updatePreviewOverlay() } }
+    var onBrushBegin: ((CGPoint) -> Void)?
+    var onBrushMove: ((CGPoint) -> Void)?
+    var onBrushEnd: (() -> Void)?
+    var onPolygonPoint: ((CGPoint) -> Void)?
     private var lastDragLocation: CGPoint?
+    private var primaryCameraInteraction = false
+    private var brushEditing = false
+    private var polygonClickCandidate = false
+    private let previewLayer = CAShapeLayer()
+    private var previewLayerInstalled = false
+
+    var previewPath: CGPath? { previewLayer.path }
 
     override var acceptsFirstResponder: Bool { true }
 
+    override func layout() {
+        super.layout()
+        installPreviewLayerIfNeeded()
+        previewLayer.frame = bounds
+        updatePreviewOverlay()
+    }
+
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
-        if event.clickCount == 2 {
+        let location = convert(event.locationInWindow, from: nil)
+        primaryCameraInteraction = terrainTool == .inspect || event.modifierFlags.contains(.option)
+        if event.clickCount == 2, primaryCameraInteraction {
             renderer?.fitCameraToDomain()
             setNeedsDisplay(bounds)
             lastDragLocation = nil
+            primaryCameraInteraction = false
+        } else if primaryCameraInteraction {
+            lastDragLocation = location
+        } else if terrainTool.operation != nil,
+                  let point = physicalPoint(at: location) {
+            brushEditing = true
+            onBrushBegin?(point)
+        } else if terrainTool == .polygon {
+            polygonClickCandidate = true
+            lastDragLocation = location
         } else {
-            lastDragLocation = convert(event.locationInWindow, from: nil)
+            lastDragLocation = nil
         }
     }
 
     override func mouseDragged(with event: NSEvent) {
         let location = convert(event.locationInWindow, from: nil)
         guard let lastDragLocation else {
+            if brushEditing, let point = physicalPoint(at: location) {
+                onBrushMove?(point)
+            }
+            return
+        }
+        if brushEditing {
+            if let point = physicalPoint(at: location) {
+                onBrushMove?(point)
+            }
+            self.lastDragLocation = location
+            return
+        }
+        if terrainTool == .polygon, !primaryCameraInteraction {
+            polygonClickCandidate = false
+            self.lastDragLocation = location
+            return
+        }
+        guard primaryCameraInteraction else {
             self.lastDragLocation = location
             return
         }
@@ -157,7 +235,17 @@ final class InteractiveMTKView: MTKView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if brushEditing {
+            brushEditing = false
+            onBrushEnd?()
+        } else if polygonClickCandidate,
+                  terrainTool == .polygon,
+                  let point = physicalPoint(at: convert(event.locationInWindow, from: nil)) {
+            onPolygonPoint?(point)
+        }
         lastDragLocation = nil
+        primaryCameraInteraction = false
+        polygonClickCandidate = false
         super.mouseUp(with: event)
     }
 
@@ -184,6 +272,59 @@ final class InteractiveMTKView: MTKView {
     override func otherMouseUp(with event: NSEvent) {
         lastDragLocation = nil
         super.otherMouseUp(with: event)
+    }
+
+    private func physicalPoint(at point: CGPoint) -> CGPoint? {
+        let scale = window?.backingScaleFactor ?? 1
+        return renderer?.physicalPoint(
+            at: CGPoint(x: point.x * scale, y: point.y * scale),
+            drawableSize: drawableSize
+        )
+    }
+
+    func updatePreviewOverlay() {
+        installPreviewLayerIfNeeded()
+        guard let renderer else {
+            previewLayer.path = nil
+            return
+        }
+        let scale = window?.backingScaleFactor ?? 1
+        func viewPoint(_ physicalPoint: CGPoint) -> CGPoint? {
+            guard let projected = renderer.project(physicalPoint: physicalPoint) else { return nil }
+            return CGPoint(x: projected.x / scale, y: projected.y / scale)
+        }
+        let path = CGMutablePath()
+        if terrainTool.operation != nil,
+           let brushPreviewPoint {
+            let outline = renderer.projectedBrushOutline(
+                center: brushPreviewPoint,
+                radius: brushRadius
+            ).map { CGPoint(x: $0.x / scale, y: $0.y / scale) }
+            for (index, point) in outline.enumerated() {
+                if index == 0 { path.move(to: point) } else { path.addLine(to: point) }
+            }
+            if outline.count > 2 {
+                path.closeSubpath()
+            }
+        }
+        let projectedPolygon = polygonPoints.compactMap(viewPoint)
+        for (index, point) in projectedPolygon.enumerated() {
+            if index == 0 { path.move(to: point) } else { path.addLine(to: point) }
+            path.addEllipse(in: CGRect(x: point.x - 3, y: point.y - 3, width: 6, height: 6))
+        }
+        previewLayer.path = path.isEmpty ? nil : path
+    }
+
+    private func installPreviewLayerIfNeeded() {
+        guard !previewLayerInstalled else { return }
+        wantsLayer = true
+        previewLayer.strokeColor = NSColor.white.withAlphaComponent(0.9).cgColor
+        previewLayer.fillColor = NSColor.clear.cgColor
+        previewLayer.lineWidth = 2
+        previewLayer.lineDashPattern = [5, 4]
+        previewLayer.lineJoin = .round
+        layer?.addSublayer(previewLayer)
+        previewLayerInstalled = true
     }
 
     override func scrollWheel(with event: NSEvent) {

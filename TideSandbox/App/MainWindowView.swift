@@ -101,9 +101,8 @@ struct MainWindowView: View {
             .pickerStyle(.segmented)
             .frame(width: 360)
             .accessibilityIdentifier("terrain-tool-picker")
-            .disabled(model.viewportMode == .heightField3D)
             .help(model.viewportMode == .heightField3D
-                  ? "Terrain editing is available in 2D mode."
+                  ? "Edit with the primary pointer. Hold Option or use the middle button to move the camera."
                   : "Choose a terrain editing tool")
         }
         .labelStyle(.iconOnly)
@@ -349,16 +348,20 @@ private struct InspectorView: View {
                 Text("Initial").tag(WSEditTarget.initialState)
                 Text("Paused current").tag(WSEditTarget.pausedCurrentState)
             }
+            .accessibilityIdentifier("edit-target-picker")
             if model.tool.operation != nil {
                 LabeledSlider(title: "Radius", value: $model.brushRadius, range: 0.5...12,
-                              format: "%.1f m")
+                              format: "%.1f m",
+                              accessibilityIdentifier: "brush-radius-slider")
                 LabeledSlider(title: "Rate", value: $model.brushStrength, range: 0.05...3,
-                              format: "%.2f m/s")
+                              format: "%.2f m/s",
+                              accessibilityIdentifier: "brush-strength-slider")
                 Picker("Falloff", selection: $model.brushFalloff) {
                     Text("Constant").tag(WSBrushFalloff.constant)
                     Text("Linear").tag(WSBrushFalloff.linear)
                     Text("Smooth").tag(WSBrushFalloff.smooth)
                 }
+                .accessibilityIdentifier("brush-falloff-picker")
                 Text("Press and drag, or hold still, to paint. Editing pauses the simulation.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -369,18 +372,26 @@ private struct InspectorView: View {
                     Text("Add water").tag(WSMaterialOperation.addWater)
                     Text("Remove water").tag(WSMaterialOperation.removeWater)
                 }
+                .accessibilityIdentifier("polygon-operation-picker")
                 LabeledSlider(title: "Amount", value: $model.polygonAmount,
-                              range: 0.01...2, format: "%.2f m")
+                              range: 0.01...2, format: "%.2f m",
+                              accessibilityIdentifier: "polygon-amount-slider")
                 HStack {
                     Text("\(model.polygonPoints.count) vertices")
                         .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("polygon-vertex-count")
                     Spacer()
                     Button("Cancel", action: model.cancelPolygon)
+                        .accessibilityIdentifier("cancel-polygon-button")
                     Button("Apply", action: model.completePolygon)
                         .disabled(model.polygonPoints.count < 3)
+                        .accessibilityIdentifier("apply-polygon-button")
+                        .keyboardShortcut(.return, modifiers: .command)
                 }
             } else {
-                Text("Choose a terrain tool, then interact directly with the mosaic.")
+                Text(model.viewportMode == .heightField3D
+                     ? "Edit with the primary pointer. Hold Option or use the middle button to move the camera."
+                     : "Choose a terrain tool, then interact directly with the mosaic.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -504,6 +504,79 @@ namespace {
     }
 }
 
+- (void)testViewportAgnosticBrushAndPolygonRoutesAreNumericallyIdentical {
+    constexpr Point2D polygon[]{{18.0, 18.0}, {26.0, 18.0},
+                                {26.0, 26.0}, {18.0, 26.0}};
+    for (const EditTarget target : {EditTarget::initialState,
+                                    EditTarget::pausedCurrentState}) {
+        for (const MaterialOperation operation : {
+                 MaterialOperation::addSand, MaterialOperation::removeSand,
+                 MaterialOperation::addWater, MaterialOperation::removeWater}) {
+            SimulationState twoDState = makeState(32, 32, 0.4);
+            SimulationState threeDState = makeState(32, 32, 0.4);
+            if (target == EditTarget::pausedCurrentState) {
+                SolverConfiguration configuration;
+                configuration.workerCount = 1;
+                configuration.minimumWetDepth = 1.0e-8;
+                WeakNonlinearSolver twoDSolver(twoDState, configuration);
+                WeakNonlinearSolver threeDSolver(threeDState, configuration);
+                for (std::size_t step = 0; step < 100; ++step) {
+                    XCTAssertEqual(twoDSolver.stepOnce(0.001), StepStatus::success);
+                    XCTAssertEqual(threeDSolver.stepOnce(0.001), StepStatus::success);
+                }
+            }
+
+            TerrainEditor twoDEditor(twoDState, 1.0e-8);
+            TerrainEditor threeDEditor(threeDState, 1.0e-8);
+            const BrushCommand brush{
+                {{12.5, 12.5}, 3.5, BrushFalloff::smooth},
+                {operation, 0.15, target},
+            };
+            const TerrainEditResult twoDBrush = twoDEditor.applyBrush(brush);
+            const TerrainEditResult threeDBrush = threeDEditor.applyBrush(brush);
+
+            const auto assertResultParity = [&](const TerrainEditResult& first,
+                                                const TerrainEditResult& second) {
+                XCTAssertEqual(first.status, second.status);
+                XCTAssertEqual(first.changedCells, second.changedCells);
+                XCTAssertEqual(first.changedFaces, second.changedFaces);
+                XCTAssertEqual(first.sandVolumeDelta, second.sandVolumeDelta);
+                XCTAssertEqual(first.waterVolumeDelta, second.waterVolumeDelta);
+                XCTAssertEqual(first.clamped, second.clamped);
+                XCTAssertEqual(first.newlyWetCells, second.newlyWetCells);
+                XCTAssertEqual(first.newlyDryCells, second.newlyDryCells);
+            };
+            const auto assertStateParity = [&] {
+                XCTAssertEqual(maximumDifference(twoDState.bedElevation().values(),
+                                                 threeDState.bedElevation().values()), 0.0);
+                XCTAssertEqual(maximumDifference(twoDState.waterDepth().values(),
+                                                 threeDState.waterDepth().values()), 0.0);
+                XCTAssertEqual(maximumDifference(twoDState.velX().values(),
+                                                 threeDState.velX().values()), 0.0);
+                XCTAssertEqual(maximumDifference(twoDState.velY().values(),
+                                                 threeDState.velY().values()), 0.0);
+                XCTAssertEqual(twoDState.time(), threeDState.time());
+                XCTAssertEqual(volume(twoDState), volume(threeDState));
+            };
+            assertResultParity(twoDBrush, threeDBrush);
+            assertStateParity();
+
+            const PolygonCommand polygonCommand{
+                polygon,
+                {operation, 0.05, target},
+            };
+            const TerrainEditResult twoDPolygon = twoDEditor.applyPolygon(polygonCommand);
+            const TerrainEditResult threeDPolygon = threeDEditor.applyPolygon(polygonCommand);
+            assertResultParity(twoDPolygon, threeDPolygon);
+            assertStateParity();
+
+            twoDState.reset();
+            threeDState.reset();
+            assertStateParity();
+        }
+    }
+}
+
 - (void)testPausedMaterialEditsRetainTimeMixMomentumAndResetToEditedInitialState {
     for (const MaterialOperation operation : {
              MaterialOperation::addSand, MaterialOperation::removeSand,

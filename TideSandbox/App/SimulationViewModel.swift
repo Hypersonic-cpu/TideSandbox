@@ -83,7 +83,16 @@ final class SimulationViewModel: ObservableObject {
     @Published var displayMode: DisplayMode = .decorativeComposite
     @Published var palette: ColorPalette = .blueWhite
     @Published var resolutionPolicy: DisplayResolutionPolicy = .identicalCells
-    @Published var tool: TerrainTool = .inspect
+    @Published var tool: TerrainTool = .inspect {
+        didSet {
+            if tool != .inspect {
+                pause()
+            }
+            if tool.operation == nil {
+                brushPreviewPoint = nil
+            }
+        }
+    }
     @Published var showGrid = true
     @Published var speed = 1.0
     @Published var gravity = 9.81
@@ -115,6 +124,14 @@ final class SimulationViewModel: ObservableObject {
     @Published private(set) var decorativeMapConfiguration = DecorativeMapConfiguration.default
 
     init() {
+#if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--ui-test-fast-material-brush") {
+            brushRadius = 5
+            brushStrength = 3
+            brushFalloff = .constant
+        }
+#endif
         let seed = SimulationPreset.centerBump32.makeSeed()
         storedInitialBedElevation = seed.bedElevation
         storedInitialWaterDepth = seed.waterDepth
@@ -163,6 +180,7 @@ final class SimulationViewModel: ObservableObject {
     func reset() {
         pause()
         polygonPoints.removeAll(keepingCapacity: true)
+        brushPreviewPoint = nil
         runtime.reset()
     }
 
@@ -272,6 +290,7 @@ final class SimulationViewModel: ObservableObject {
         pause()
         resetCameraFraming()
         polygonPoints.removeAll(keepingCapacity: true)
+        brushPreviewPoint = nil
         displayMode = .decorativeComposite
         palette = displayMode.preferredPalette
         currentScene = nil
@@ -464,7 +483,6 @@ final class SimulationViewModel: ObservableObject {
     }
 
     func endBrush() {
-        brushPreviewPoint = nil
         runtime.endBrush()
     }
 

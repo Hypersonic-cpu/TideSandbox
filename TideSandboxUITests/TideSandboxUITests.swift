@@ -102,6 +102,36 @@ final class TideSandboxUITests: XCTestCase {
     }
 
     @MainActor
+    func testCompositeAnnotationsToggleAsOneOverlay() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        let landLegend = app.staticTexts["Land elevation"]
+        let shorelineKey = app.staticTexts["Wet sand"]
+        let scaleBar = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Scale bar from 0")
+        ).firstMatch
+        let toggle = app.descendants(matching: .any)["map-annotations-toggle"]
+        XCTAssertTrue(landLegend.waitForExistence(timeout: 8))
+        XCTAssertTrue(shorelineKey.exists)
+        XCTAssertTrue(scaleBar.exists)
+        XCTAssertTrue(toggle.waitForExistence(timeout: 3))
+        toggle.click()
+        XCTAssertFalse(landLegend.waitForExistence(timeout: 1))
+        XCTAssertFalse(shorelineKey.exists)
+        XCTAssertFalse(scaleBar.exists)
+        toggle.click()
+        XCTAssertTrue(landLegend.waitForExistence(timeout: 3))
+        XCTAssertTrue(shorelineKey.exists)
+        XCTAssertTrue(scaleBar.exists)
+
+        let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        screenshot.name = "2D Natural Composite — Legends and Scale"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor
     func testViewportSwitchPreserves2DStateAndReturnsToMosaic() throws {
         let app = XCUIApplication()
         app.launch()
@@ -146,8 +176,110 @@ final class TideSandboxUITests: XCTestCase {
 
         let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
         screenshot.name = "3D Metal Terrain"
-        screenshot.lifetime = .deleteOnSuccess
+        screenshot.lifetime = .keepAlways
         add(screenshot)
+    }
+
+    @MainActor
+    func test3DEditingPreviewsSharedStateAndPreservesCamera() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-test-fast-material-brush"]
+        app.launch()
+
+        let modePicker = app.descendants(matching: .any)["viewport-mode-picker"]
+        XCTAssertTrue(modePicker.waitForExistence(timeout: 8))
+        let toolbar = app.descendants(matching: .any)["terrain-tool-picker"]
+        let removeWater = toolbar.radioButtons.matching(
+            NSPredicate(format: "label == %@", "Remove water")
+        ).firstMatch
+        XCTAssertTrue(removeWater.exists)
+        XCTAssertTrue(toolbar.isEnabled)
+        removeWater.click()
+
+        let mode3D = modePicker.radioButtons.matching(
+            NSPredicate(format: "label == %@", "3D")
+        ).firstMatch
+        XCTAssertTrue(mode3D.isHittable)
+        mode3D.click()
+        let heightField = app.descendants(matching: .any)["height-field-3d"]
+        XCTAssertTrue(heightField.waitForExistence(timeout: 3))
+
+        let yaw = app.sliders["camera-yaw-slider"]
+        let pitch = app.sliders["camera-pitch-slider"]
+        XCTAssertTrue(yaw.waitForExistence(timeout: 3))
+        XCTAssertTrue(pitch.exists)
+        yaw.adjust(toNormalizedSliderPosition: 0.62)
+        pitch.adjust(toNormalizedSliderPosition: 0.58)
+        let expectedYaw = String(describing: yaw.value)
+        let expectedPitch = String(describing: pitch.value)
+
+        let time = app.descendants(matching: .any)["time-diagnostic"]
+        let volume = app.descendants(matching: .any)["volume-diagnostic"]
+        let wetCells = app.descendants(matching: .any)["wet-cells-diagnostic"]
+        let initialTime = try XCTUnwrap(diagnosticNumber(time))
+        let initialVolume = try XCTUnwrap(diagnosticNumber(volume))
+        let initialWetCells = try XCTUnwrap(diagnosticNumber(wetCells))
+        heightField.coordinate(withNormalizedOffset: CGVector(dx: 0.50, dy: 0.22))
+            .press(forDuration: 2.2)
+        XCTAssertTrue(waitForDiagnostic(volume, lessThan: initialVolume, timeout: 5))
+        XCTAssertTrue(waitForDiagnostic(wetCells, lessThan: initialWetCells, timeout: 5))
+        XCTAssertEqual(try XCTUnwrap(diagnosticNumber(time)), initialTime)
+
+        let brushScreenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        brushScreenshot.name = "3D Remove Water — Committed Brush and Preview"
+        brushScreenshot.lifetime = .keepAlways
+        add(brushScreenshot)
+
+        let polygonTool = toolbar.radioButtons.matching(
+            NSPredicate(format: "label == %@", "Polygon")
+        ).firstMatch
+        polygonTool.click()
+        for offset in [
+            CGVector(dx: 0.41, dy: 0.20),
+            CGVector(dx: 0.56, dy: 0.20),
+            CGVector(dx: 0.56, dy: 0.29),
+            CGVector(dx: 0.41, dy: 0.29),
+        ] {
+            heightField.coordinate(withNormalizedOffset: offset).click()
+        }
+        XCTAssertTrue(waitForValue("4", identifier: "polygon-vertex-count", in: app))
+        let polygonScreenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        polygonScreenshot.name = "3D Polygon — World-Space Preview"
+        polygonScreenshot.lifetime = .keepAlways
+        add(polygonScreenshot)
+
+        let volumeBeforePolygon = try XCTUnwrap(diagnosticNumber(volume))
+        let apply = app.buttons["apply-polygon-button"]
+        XCTAssertTrue(apply.waitForExistence(timeout: 3))
+        heightField.typeKey(.return, modifierFlags: .command)
+        XCTAssertTrue(waitForDiagnostic(volume, lessThan: volumeBeforePolygon, timeout: 5))
+        XCTAssertEqual(try XCTUnwrap(diagnosticNumber(time)), initialTime)
+
+        let committedScreenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        committedScreenshot.name = "3D Polygon — Committed Terrain Relief"
+        committedScreenshot.lifetime = .keepAlways
+        add(committedScreenshot)
+
+        let sharedVolume = try XCTUnwrap(diagnosticText(volume))
+        let mode2D = modePicker.radioButtons.matching(
+            NSPredicate(format: "label == %@", "2D")
+        ).firstMatch
+        XCTAssertTrue(mode2D.isHittable)
+        mode2D.click()
+        XCTAssertTrue(app.descendants(matching: .any)["mosaic-grid"]
+            .waitForExistence(timeout: 3))
+        XCTAssertEqual(try XCTUnwrap(diagnosticText(volume)), sharedVolume)
+
+        let sharedScreenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        sharedScreenshot.name = "2D Composite — State Edited in 3D"
+        sharedScreenshot.lifetime = .keepAlways
+        add(sharedScreenshot)
+
+        mode3D.click()
+        XCTAssertTrue(heightField.waitForExistence(timeout: 3))
+        XCTAssertEqual(String(describing: yaw.value), expectedYaw)
+        XCTAssertEqual(String(describing: pitch.value), expectedPitch)
+        XCTAssertEqual(try XCTUnwrap(diagnosticText(volume)), sharedVolume)
     }
 
     @MainActor
@@ -240,7 +372,7 @@ final class TideSandboxUITests: XCTestCase {
             app.descendants(matching: .any)["height-field-3d"]
                 .waitForExistence(timeout: 3)
         )
-        XCTAssertFalse(toolPicker.isEnabled)
+        XCTAssertTrue(toolPicker.isEnabled)
 
         let yaw = app.sliders["camera-yaw-slider"]
         let pitch = app.sliders["camera-pitch-slider"]
@@ -632,6 +764,22 @@ final class TideSandboxUITests: XCTestCase {
                 return false
             }
             return value >= minimum
+        }
+        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: element)
+        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    private func waitForDiagnostic(
+        _ element: XCUIElement,
+        lessThan maximum: Double,
+        timeout: TimeInterval
+    ) -> Bool {
+        let predicate = NSPredicate { object, _ in
+            guard let element = object as? XCUIElement,
+                  let value = self.diagnosticNumber(element) else {
+                return false
+            }
+            return value < maximum
         }
         let expectation = XCTNSPredicateExpectation(predicate: predicate, object: element)
         return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed

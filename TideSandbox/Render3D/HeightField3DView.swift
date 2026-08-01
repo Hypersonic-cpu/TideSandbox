@@ -15,6 +15,14 @@ struct HeightField3DView: View {
                 cameraFitRequestID: model.cameraFitRequestID,
                 minimumWetDepth: Float(model.minimumWetDepth),
                 settings: model.render3DSettings,
+                terrainTool: model.tool,
+                brushPreviewPoint: model.brushPreviewPoint,
+                brushRadius: model.brushRadius,
+                polygonPoints: model.polygonPoints,
+                onBrushBegin: model.beginBrush,
+                onBrushMove: model.moveBrush,
+                onBrushEnd: model.endBrush,
+                onPolygonPoint: model.addPolygonPoint,
                 onCameraChange: model.acceptCameraState
             )
             if MTLCreateSystemDefaultDevice() == nil {

@@ -55,7 +55,7 @@ struct MosaicGridView: View {
             .contentShape(Rectangle())
             .gesture(pointerGesture(mapping: mapping))
         }
-        .accessibilityElement(children: .ignore)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel("2D mosaic viewport")
         .accessibilityIdentifier("mosaic-grid")
     }
@@ -212,9 +212,9 @@ private struct MapAnnotationsOverlay: View {
             }
             .padding(10)
             .padding(.top, 82)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("map-annotations-overlay")
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("map-annotations-overlay")
     }
 
     private var decorativeLegend: some View {
@@ -304,6 +304,7 @@ private struct MapAnnotationsOverlay: View {
         }
         .padding(7)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("Scale bar from 0 to \(specification.endpointLabel)")
     }
 
@@ -321,6 +322,7 @@ enum MosaicRaster {
         policy: DisplayResolutionPolicy = .identicalCells,
         targetPixelSize: CGSize? = nil
     ) -> CGImage? {
+        ViewportRenderActivity.recordMosaicRasterization()
         if mode == .decorativeComposite {
             return DecorativeCompositeRasterizer.image(
                 bedElevation: snapshot.bedElevation,

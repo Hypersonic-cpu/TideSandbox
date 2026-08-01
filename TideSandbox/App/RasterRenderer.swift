@@ -28,6 +28,7 @@ enum ScalarResampler {
         outputHeight: Int,
         policy: DisplayResolutionPolicy
     ) -> [Float]? {
+        ViewportRenderActivity.recordScalarResample()
         guard width > 0, height > 0,
               outputWidth > 0, outputHeight > 0,
               width <= Int.max / height,

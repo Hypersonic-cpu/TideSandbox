@@ -800,7 +800,7 @@ The same annotation toggle shows/hides:
 - shoreline key;
 - physical scale bar.
 
-- [ ] **5.7 Add rendering and UI tests for the natural composite.**
+- [x] **5.7 Add rendering and UI tests for the natural composite.**
 
 Required tests:
 
@@ -880,7 +880,7 @@ Assertions:
 
 # Phase 6 — 3D editing integration without 3D visual redesign
 
-- [ ] **6.1 Enable the shared editing tools while the 3D viewport is active.**
+- [x] **6.1 Enable the shared editing tools while the 3D viewport is active.**
 
 Current behavior disables the terrain tool picker in 3D. Replace this restriction with 3D interaction routing.
 
@@ -896,7 +896,7 @@ Requirements:
 - tool state survives 2D ↔ 3D switching;
 - an unfinished polygon either survives the switch in world coordinates or is explicitly cancelled with consistent UI feedback; choose and test one policy.
 
-- [ ] **6.2 Implement deterministic 3D pointer-to-world picking for brush and polygon coordinates.**
+- [x] **6.2 Implement deterministic 3D pointer-to-world picking for brush and polygon coordinates.**
 
 The output needed by the Engine is only the horizontal physical coordinate `(x,z)` corresponding to the simulation domain.
 
@@ -926,7 +926,7 @@ Requirements:
 - preserve engine-row/world-axis conventions;
 - test top, isometric, low-oblique, opposite-oblique, zoomed, and panned cameras.
 
-- [ ] **6.3 Render 3D edit feedback and committed geometry changes without changing 3D materials.**
+- [x] **6.3 Render 3D edit feedback and committed geometry changes without changing 3D materials.**
 
 Immediate committed-state update:
 
@@ -958,7 +958,7 @@ Interactive preview:
 - preview updates may redraw the active 3D viewport without publishing a new Engine snapshot;
 - committed edits must come from the shared Engine snapshot, not from a renderer-only deformation.
 
-- [ ] **6.4 Enforce active-viewport-only rendering and resource work.**
+- [x] **6.4 Enforce active-viewport-only rendering and resource work.**
 
 Preserve `SimulationViewport` as a real switch rather than stacking hidden 2D and 3D views.
 
@@ -985,7 +985,7 @@ On switching:
 
 Add lightweight debug/test counters that are absent or compiled out of Release hot paths.
 
-- [ ] **6.5 Add 2D/3D editing parity and rendering tests.**
+- [x] **6.5 Add 2D/3D editing parity and rendering tests.**
 
 Numerical parity:
 

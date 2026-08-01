@@ -108,6 +108,7 @@ struct DecorativeMapConfiguration: Equatable, Sendable {
     let shoreHighlightStrength: Float
     let wetSandStrength: Float
     let autoRangeEnabled: Bool
+    let submergedBedCoolingStrength: Float = 0.15
 
     static let `default` = DecorativeMapConfiguration(
         landElevationMinimum: -1,
@@ -157,7 +158,9 @@ struct DecorativeMapConfiguration: Equatable, Sendable {
         hShallowAccent.isFinite && hShallowAccent > 0 &&
         visualWetThreshold.isFinite && visualWetThreshold >= 0 &&
         shoreHighlightStrength.isFinite && (0...1).contains(shoreHighlightStrength) &&
-        wetSandStrength.isFinite && (0...1).contains(wetSandStrength)
+        wetSandStrength.isFinite && (0...1).contains(wetSandStrength) &&
+        submergedBedCoolingStrength.isFinite &&
+        (0...1).contains(submergedBedCoolingStrength)
     }
 }
 
@@ -186,12 +189,28 @@ enum ColorMap {
               configuration.isValid else { return invalid }
         let land = terrainBase(bedElevation, configuration: configuration)
         guard waterDepth > 0 else { return land }
-        let cooledBed = interpolateLinear(from: land, to: submergedBed, t: 0.15)
+        let cooledBed = submergedTerrainBase(
+            bedElevation,
+            configuration: configuration
+        )
         let water = waterGradient(depth: waterDepth, configuration: configuration)
         let opacity = waterOpticalOpacity(depth: waterDepth, configuration: configuration)
         let optical = interpolateLinear(from: cooledBed, to: water, t: opacity)
         let shallowAccent = exp(-pow(waterDepth / configuration.hShallowAccent, 2)) * 0.16
         return interpolateLinear(from: optical, to: turquoiseAccent, t: shallowAccent)
+    }
+
+    static func submergedTerrainBase(
+        _ bedElevation: Float,
+        configuration: DecorativeMapConfiguration
+    ) -> RGBA {
+        let land = terrainBase(bedElevation, configuration: configuration)
+        guard land != invalid, configuration.isValid else { return invalid }
+        return interpolateLinear(
+            from: land,
+            to: submergedBed,
+            t: configuration.submergedBedCoolingStrength
+        )
     }
 
     static func decorativeShoreline(
