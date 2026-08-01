@@ -115,6 +115,7 @@ final class SimulationViewModel: ObservableObject {
     }
     @Published var showGrid = true
     @Published var speed = 1.0
+    @Published var simulationTick = SimulationTiming.defaultTickSeconds
     @Published var gravity = 9.81
     @Published var linearDamping = 0.08
     @Published var cflNumber = 0.3
@@ -147,6 +148,10 @@ final class SimulationViewModel: ObservableObject {
     private var storedInitialWaterDepth = [Float]()
     @Published private(set) var decorativeMapConfiguration = DecorativeMapConfiguration.default
 
+    var visualWetDepth: Double {
+        max(minimumWetDepth, Double(ShorelineDrying.visualFilmDepth))
+    }
+
     init(preferences: UserDefaults = .standard) {
 #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
@@ -172,7 +177,7 @@ final class SimulationViewModel: ObservableObject {
         decorativeMapConfiguration = DecorativeMapConfiguration.stableScene(
             bedElevation: seed.bedElevation,
             waterDepth: seed.waterDepth,
-            visualWetThreshold: 1.0e-6
+            visualWetThreshold: ShorelineDrying.visualFilmDepth
         )
         runtime = SimulationRuntime(seed: seed, requestedBackend: restoredBackend)
         runtime.setSnapshotHandler { [weak self] snapshot, initialStateChanged in
@@ -197,6 +202,7 @@ final class SimulationViewModel: ObservableObject {
         isPlaying.toggle()
         if isPlaying { isDirty = true }
         runtime.setPlaybackSpeed(speed)
+        runtime.setSimulationTick(simulationTick)
         runtime.setPlaying(isPlaying)
     }
 
@@ -216,7 +222,7 @@ final class SimulationViewModel: ObservableObject {
     func step() {
         pause()
         isDirty = true
-        runtime.advanceOneFrame(speed: speed)
+        runtime.advanceOneTick(simulationTick)
     }
 
     func reset() {
@@ -347,7 +353,7 @@ final class SimulationViewModel: ObservableObject {
         decorativeMapConfiguration = DecorativeMapConfiguration.stableScene(
             bedElevation: seed.bedElevation,
             waterDepth: seed.waterDepth,
-            visualWetThreshold: Float(minimumWetDepth)
+            visualWetThreshold: Float(visualWetDepth)
         )
         runtime.load(seed)
     }
@@ -373,7 +379,7 @@ final class SimulationViewModel: ObservableObject {
         decorativeMapConfiguration = DecorativeMapConfiguration.stableScene(
             bedElevation: document.bedElevation,
             waterDepth: document.initialWaterDepth,
-            visualWetThreshold: Float(minimumWetDepth)
+            visualWetThreshold: Float(visualWetDepth)
         )
         runtime.load(SceneSeed(
             width: document.manifest.gridWidth,
@@ -616,6 +622,10 @@ final class SimulationViewModel: ObservableObject {
 
     func updatePlaybackSpeed() {
         runtime.setPlaybackSpeed(speed)
+    }
+
+    func updateSimulationTick() {
+        runtime.setSimulationTick(simulationTick)
     }
 
     func beginBrush(at point: CGPoint) {

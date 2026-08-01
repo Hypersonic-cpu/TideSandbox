@@ -13,6 +13,9 @@
 		FC08B87B301D42A400792786 /* TERRAIN_MODIFY_PLAN.md in Resources */ = {isa = PBXBuildFile; fileRef = FC08B87A301D42A400792786 /* TERRAIN_MODIFY_PLAN.md */; };
 		FC08B881301DC9D800792786 /* SWE_GPU_ACCEL_PLAN.md in Resources */ = {isa = PBXBuildFile; fileRef = FC08B880301DC9CD00792786 /* SWE_GPU_ACCEL_PLAN.md */; };
 		FC08B883301DD00000792786 /* MetalPerformanceShadersGraph.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FC08B882301DD00000792786 /* MetalPerformanceShadersGraph.framework */; };
+		FC08B997301DF71500792786 /* WIDGET_PLAN.md in Resources */ = {isa = PBXBuildFile; fileRef = FC08B996301DF70700792786 /* WIDGET_PLAN.md */; };
+		FC08B998301DF80000792786 /* Bay.tidemap in Resources */ = {isa = PBXBuildFile; fileRef = FC08B953301DF5F900792786 /* Bay.tidemap */; };
+		FC08B999301DF80000792786 /* Lake.tidemap in Resources */ = {isa = PBXBuildFile; fileRef = FC08B96B301DF5F900792786 /* Lake.tidemap */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -43,6 +46,28 @@
 		FC08B87A301D42A400792786 /* TERRAIN_MODIFY_PLAN.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = TERRAIN_MODIFY_PLAN.md; sourceTree = "<group>"; };
 		FC08B880301DC9CD00792786 /* SWE_GPU_ACCEL_PLAN.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = SWE_GPU_ACCEL_PLAN.md; sourceTree = "<group>"; };
 		FC08B882301DD00000792786 /* MetalPerformanceShadersGraph.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalPerformanceShadersGraph.framework; path = System/Library/Frameworks/MetalPerformanceShadersGraph.framework; sourceTree = SDKROOT; };
+		FC08B904301DF57200792786 /* Bay-contact-sheet.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Bay-contact-sheet.png"; sourceTree = "<group>"; };
+		FC08B905301DF57200792786 /* bay-widget-medium-clear.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "bay-widget-medium-clear.png"; sourceTree = "<group>"; };
+		FC08B906301DF57200792786 /* bay-widget-medium-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "bay-widget-medium-dark.png"; sourceTree = "<group>"; };
+		FC08B907301DF57200792786 /* bay-widget-medium-default.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "bay-widget-medium-default.png"; sourceTree = "<group>"; };
+		FC08B908301DF57200792786 /* bay-widget-medium-tinted.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "bay-widget-medium-tinted.png"; sourceTree = "<group>"; };
+		FC08B909301DF57200792786 /* bay-widget-small-clear.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "bay-widget-small-clear.png"; sourceTree = "<group>"; };
+		FC08B90A301DF57200792786 /* bay-widget-small-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "bay-widget-small-dark.png"; sourceTree = "<group>"; };
+		FC08B90B301DF57200792786 /* bay-widget-small-default.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "bay-widget-small-default.png"; sourceTree = "<group>"; };
+		FC08B90C301DF57200792786 /* bay-widget-small-tinted.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "bay-widget-small-tinted.png"; sourceTree = "<group>"; };
+		FC08B90D301DF57200792786 /* Lake-contact-sheet.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Lake-contact-sheet.png"; sourceTree = "<group>"; };
+		FC08B90E301DF57200792786 /* lake-widget-medium-clear.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "lake-widget-medium-clear.png"; sourceTree = "<group>"; };
+		FC08B90F301DF57200792786 /* lake-widget-medium-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "lake-widget-medium-dark.png"; sourceTree = "<group>"; };
+		FC08B910301DF57200792786 /* lake-widget-medium-default.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "lake-widget-medium-default.png"; sourceTree = "<group>"; };
+		FC08B911301DF57200792786 /* lake-widget-medium-tinted.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "lake-widget-medium-tinted.png"; sourceTree = "<group>"; };
+		FC08B912301DF57200792786 /* lake-widget-small-clear.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "lake-widget-small-clear.png"; sourceTree = "<group>"; };
+		FC08B913301DF57200792786 /* lake-widget-small-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "lake-widget-small-dark.png"; sourceTree = "<group>"; };
+		FC08B914301DF57200792786 /* lake-widget-small-default.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "lake-widget-small-default.png"; sourceTree = "<group>"; };
+		FC08B915301DF57200792786 /* lake-widget-small-tinted.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "lake-widget-small-tinted.png"; sourceTree = "<group>"; };
+		FC08B917301DF57200792786 /* asset_validation_report.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = asset_validation_report.md; sourceTree = "<group>"; };
+		FC08B953301DF5F900792786 /* Bay.tidemap */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Bay.tidemap; sourceTree = "<group>"; };
+		FC08B96B301DF5F900792786 /* Lake.tidemap */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Lake.tidemap; sourceTree = "<group>"; };
+		FC08B996301DF70700792786 /* WIDGET_PLAN.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = WIDGET_PLAN.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -111,6 +136,8 @@
 				FC08B56D301CEEC800792786 /* TideSandboxTests */,
 				FC08B577301CEEC800792786 /* TideSandboxUITests */,
 				FC08B55E301CEEC600792786 /* Products */,
+				FC08B892301DD6DE00792786 /* Recovered References */,
+				FC08B96D301DF5F900792786 /* Assets */,
 			);
 			sourceTree = "<group>";
 		};
@@ -127,6 +154,8 @@
 		FC08B587301CEF1E00792786 /* Docs */ = {
 			isa = PBXGroup;
 			children = (
+				FC08B996301DF70700792786 /* WIDGET_PLAN.md */,
+				FC08B918301DF57200792786 /* MapAssets */,
 				FC08B880301DC9CD00792786 /* SWE_GPU_ACCEL_PLAN.md */,
 				FC08B87A301D42A400792786 /* TERRAIN_MODIFY_PLAN.md */,
 				FC08B878301D429100792786 /* RENDER_3D_PLAN.md */,
@@ -134,6 +163,65 @@
 				FC08B588301CFB3500792786 /* SWE_2D_PLAN.md */,
 			);
 			path = Docs;
+			sourceTree = "<group>";
+		};
+		FC08B892301DD6DE00792786 /* Recovered References */ = {
+			isa = PBXGroup;
+			children = (
+				FC08B882301DD00000792786 /* MetalPerformanceShadersGraph.framework */,
+			);
+			name = "Recovered References";
+			sourceTree = "<group>";
+		};
+		FC08B916301DF57200792786 /* previews */ = {
+			isa = PBXGroup;
+			children = (
+				FC08B904301DF57200792786 /* Bay-contact-sheet.png */,
+				FC08B905301DF57200792786 /* bay-widget-medium-clear.png */,
+				FC08B906301DF57200792786 /* bay-widget-medium-dark.png */,
+				FC08B907301DF57200792786 /* bay-widget-medium-default.png */,
+				FC08B908301DF57200792786 /* bay-widget-medium-tinted.png */,
+				FC08B909301DF57200792786 /* bay-widget-small-clear.png */,
+				FC08B90A301DF57200792786 /* bay-widget-small-dark.png */,
+				FC08B90B301DF57200792786 /* bay-widget-small-default.png */,
+				FC08B90C301DF57200792786 /* bay-widget-small-tinted.png */,
+				FC08B90D301DF57200792786 /* Lake-contact-sheet.png */,
+				FC08B90E301DF57200792786 /* lake-widget-medium-clear.png */,
+				FC08B90F301DF57200792786 /* lake-widget-medium-dark.png */,
+				FC08B910301DF57200792786 /* lake-widget-medium-default.png */,
+				FC08B911301DF57200792786 /* lake-widget-medium-tinted.png */,
+				FC08B912301DF57200792786 /* lake-widget-small-clear.png */,
+				FC08B913301DF57200792786 /* lake-widget-small-dark.png */,
+				FC08B914301DF57200792786 /* lake-widget-small-default.png */,
+				FC08B915301DF57200792786 /* lake-widget-small-tinted.png */,
+			);
+			path = previews;
+			sourceTree = "<group>";
+		};
+		FC08B918301DF57200792786 /* MapAssets */ = {
+			isa = PBXGroup;
+			children = (
+				FC08B916301DF57200792786 /* previews */,
+				FC08B917301DF57200792786 /* asset_validation_report.md */,
+			);
+			path = MapAssets;
+			sourceTree = "<group>";
+		};
+		FC08B96C301DF5F900792786 /* TideMaps */ = {
+			isa = PBXGroup;
+			children = (
+				FC08B953301DF5F900792786 /* Bay.tidemap */,
+				FC08B96B301DF5F900792786 /* Lake.tidemap */,
+			);
+			path = TideMaps;
+			sourceTree = "<group>";
+		};
+		FC08B96D301DF5F900792786 /* Assets */ = {
+			isa = PBXGroup;
+			children = (
+				FC08B96C301DF5F900792786 /* TideMaps */,
+			);
+			path = Assets;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -256,6 +344,9 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				FC08B997301DF71500792786 /* WIDGET_PLAN.md in Resources */,
+				FC08B998301DF80000792786 /* Bay.tidemap in Resources */,
+				FC08B999301DF80000792786 /* Lake.tidemap in Resources */,
 				FC08B879301D429100792786 /* RENDER_3D_PLAN.md in Resources */,
 				FC08B58A301CFBC000792786 /* SWE_WeakNonLinear_Math.md in Resources */,
 				FC08B58C301D000000792786 /* Resources/BuiltInScenes in Resources */,
@@ -439,9 +530,10 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = TF96JYQSR3;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -472,9 +564,10 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = TF96JYQSR3;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -504,9 +597,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = TF96JYQSR3;
+				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
 				MARKETING_VERSION = 1.0;
@@ -527,9 +621,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = TF96JYQSR3;
+				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
 				MARKETING_VERSION = 1.0;
@@ -549,9 +644,10 @@
 		FC08B585301CEEC800792786 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = TF96JYQSR3;
+				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
 				MARKETING_VERSION = 1.0;
@@ -571,9 +667,10 @@
 		FC08B586301CEEC800792786 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = TF96JYQSR3;
+				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
 				MARKETING_VERSION = 1.0;

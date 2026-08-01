@@ -79,6 +79,28 @@ final class DisplayTests: XCTestCase {
         )
     }
 
+    func testSimulationTimingSeparatesSmallTickFromTwentyTimesPlayback() {
+        XCTAssertEqual(SimulationTiming.tickRangeSeconds, 0.001...0.05)
+        XCTAssertEqual(SimulationTiming.playbackSpeedRange, 0.1...20)
+        XCTAssertEqual(SimulationTiming.clampedTick(-1), 0.001)
+        XCTAssertEqual(SimulationTiming.clampedTick(.infinity),
+                       SimulationTiming.defaultTickSeconds)
+        XCTAssertEqual(SimulationTiming.clampedSpeed(100), 20)
+        XCTAssertEqual(SimulationTiming.clampedSpeed(.nan), 1)
+
+        let tick = 0.004
+        let speeds = [0.1, 1.0, 4.0, 20.0]
+        let advances = speeds.map {
+            SimulationTiming.playbackAdvance(tick: tick, speed: $0)
+        }
+        XCTAssertTrue(zip(advances, advances.dropFirst()).allSatisfy { $0.0 < $0.1 })
+        for (speed, advance) in zip(speeds, advances) {
+            XCTAssertEqual(advance, tick * speed, accuracy: 1.0e-15)
+        }
+        XCTAssertEqual(SimulationTiming.playbackAdvance(tick: 0.001, speed: 20),
+                       0.02, accuracy: 1.0e-15)
+    }
+
     func testDecorativeCompositeUsesOpticalWaterAndTwoSidedShorelines() throws {
         let configuration = DecorativeMapConfiguration(
             landElevationMinimum: 0,
@@ -129,6 +151,21 @@ final class DisplayTests: XCTestCase {
             waterDepth: 0,
             configuration: configuration
         )
+        for dryingDepth in [
+            Float.zero,
+            configuration.visualWetThreshold.nextDown,
+            configuration.visualWetThreshold,
+        ] {
+            XCTAssertEqual(
+                ColorMap.decorativeComposite(
+                    bedElevation: 0.5,
+                    waterDepth: dryingDepth,
+                    configuration: configuration
+                ),
+                middleLand,
+                "a sub-centimetre residual film must render as dry sand"
+            )
+        }
         let shallow = ColorMap.decorativeComposite(
             bedElevation: 0.5,
             waterDepth: 0.08,

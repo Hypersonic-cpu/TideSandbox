@@ -1,6 +1,26 @@
 import CoreGraphics
 import Foundation
 
+nonisolated enum SimulationTiming {
+    static let defaultTickSeconds = 1.0 / 60.0
+    static let tickRangeSeconds = 0.01...0.50
+    static let playbackSpeedRange = 0.1...20.0
+
+    static func clampedTick(_ value: Double) -> Double {
+        min(max(value.isFinite ? value : defaultTickSeconds,
+                tickRangeSeconds.lowerBound), tickRangeSeconds.upperBound)
+    }
+
+    static func clampedSpeed(_ value: Double) -> Double {
+        min(max(value.isFinite ? value : 1.0,
+                playbackSpeedRange.lowerBound), playbackSpeedRange.upperBound)
+    }
+
+    static func playbackAdvance(tick: Double, speed: Double) -> Double {
+        clampedTick(tick) * clampedSpeed(speed)
+    }
+}
+
 nonisolated extension SceneBoundarySide {
     var bridgeConfiguration: WSBoundarySideConfiguration {
         let bridgeType: WSBoundaryType = switch type {
@@ -48,6 +68,7 @@ nonisolated final class SimulationRuntime: @unchecked Sendable {
     private var lastTick = DispatchTime.now()
     private var tickCount: UInt = 0
     private var playbackSpeed = 1.0
+    private var simulationTick = SimulationTiming.defaultTickSeconds
     private var isShutDown = false
 
     init(
@@ -130,17 +151,23 @@ nonisolated final class SimulationRuntime: @unchecked Sendable {
         }
     }
 
-    func advanceOneFrame(speed: Double) {
+    func advanceOneTick(_ timeStep: Double) {
         queue.async { [weak self] in
             guard let self, !isShutDown else { return }
-            _ = engine.advance(max(speed, 0.01) / 60.0)
+            _ = engine.advance(SimulationTiming.clampedTick(timeStep))
             publishSnapshot()
         }
     }
 
     func setPlaybackSpeed(_ speed: Double) {
         queue.async { [weak self] in
-            self?.playbackSpeed = max(speed, 0.01)
+            self?.playbackSpeed = SimulationTiming.clampedSpeed(speed)
+        }
+    }
+
+    func setSimulationTick(_ timeStep: Double) {
+        queue.async { [weak self] in
+            self?.simulationTick = SimulationTiming.clampedTick(timeStep)
         }
     }
 
@@ -276,7 +303,10 @@ nonisolated final class SimulationRuntime: @unchecked Sendable {
         lastTick = now
         var changed = false
         if engine.isRunning {
-            _ = engine.advance(elapsed * playbackSpeed)
+            _ = engine.advance(SimulationTiming.playbackAdvance(
+                tick: simulationTick,
+                speed: playbackSpeed
+            ))
             changed = true
         }
         if let brush = activeBrush {

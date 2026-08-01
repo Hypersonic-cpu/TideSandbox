@@ -79,7 +79,7 @@ struct MainWindowView: View {
                 Label("Step", systemImage: "forward.frame.fill")
             }
             .accessibilityIdentifier("step-button")
-            .help("Advance one display frame")
+            .help("Advance one simulation tick")
             Button(action: model.reset) {
                 Label("Reset", systemImage: "arrow.counterclockwise")
             }
@@ -349,9 +349,14 @@ private struct InspectorView: View {
                     .foregroundStyle(.orange)
                     .accessibilityIdentifier("simulation-backend-status")
             }
-            LabeledSlider(title: "Speed", value: $model.speed, range: 0.1...4,
-                          format: "%.1f×")
+            LabeledSlider(title: "Speed", value: $model.speed,
+                          range: SimulationTiming.playbackSpeedRange,
+                          format: "%.1f×", accessibilityIdentifier: "simulation-speed-slider")
                 .onChange(of: model.speed) { _, _ in model.updatePlaybackSpeed() }
+            LabeledSlider(title: "Tick", value: $model.simulationTick,
+                          range: SimulationTiming.tickRangeSeconds,
+                          format: "%.3f s", accessibilityIdentifier: "simulation-tick-slider")
+                .onChange(of: model.simulationTick) { _, _ in model.updateSimulationTick() }
             LabeledSlider(title: "Gravity", value: $model.gravity, range: 0.1...20,
                           format: "%.2f")
             LabeledSlider(title: "Damping", value: $model.linearDamping, range: 0...2,
@@ -608,6 +613,7 @@ private struct LabeledSlider: View {
             }
             Slider(value: $value, in: range)
                 .accessibilityIdentifier(accessibilityIdentifier)
+                .accessibilityValue(String(format: format, value))
         }
     }
 }

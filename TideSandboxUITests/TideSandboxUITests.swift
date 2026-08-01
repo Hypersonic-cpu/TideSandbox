@@ -25,9 +25,21 @@ final class TideSandboxUITests: XCTestCase {
         step.click()
         reset.click()
 
+        let speed = app.sliders["simulation-speed-slider"]
+        let tick = app.sliders["simulation-tick-slider"]
+        for _ in 0..<4 where !tick.isHittable {
+            app.scrollViews.firstMatch.swipeUp()
+        }
+        XCTAssertTrue(speed.waitForExistence(timeout: 3))
+        XCTAssertTrue(tick.waitForExistence(timeout: 3))
+        XCTAssertTrue(speed.isHittable)
+        XCTAssertTrue(tick.isHittable)
+        speed.adjust(toNormalizedSliderPosition: 1)
+        tick.adjust(toNormalizedSliderPosition: 0)
+
         let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
-        screenshot.name = "TideSandbox Main Window"
-        screenshot.lifetime = .deleteOnSuccess
+        screenshot.name = "TideSandbox Tick and 20x Speed Controls"
+        screenshot.lifetime = .keepAlways
         add(screenshot)
     }
 

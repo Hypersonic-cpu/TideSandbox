@@ -96,6 +96,13 @@ struct RGBA: Equatable, Sendable {
     }
 }
 
+nonisolated enum ShorelineDrying {
+    // A thinner film is visually absorbed by sand even though the solver retains it for
+    // conservative volume accounting. One centimetre makes a receding shore read as dry
+    // without changing the numerical wet/dry cutoff.
+    static let visualFilmDepth: Float = 0.01
+}
+
 struct DecorativeMapConfiguration: Equatable, Sendable {
     let landElevationMinimum: Float
     let landElevationMaximum: Float
@@ -118,7 +125,7 @@ struct DecorativeMapConfiguration: Equatable, Sendable {
         hShallow: 0.1,
         hDeep: 2,
         hShallowAccent: 0.25,
-        visualWetThreshold: 1.0e-6,
+        visualWetThreshold: ShorelineDrying.visualFilmDepth,
         shoreHighlightStrength: 0.35,
         wetSandStrength: 0.2,
         autoRangeEnabled: false
@@ -127,7 +134,7 @@ struct DecorativeMapConfiguration: Equatable, Sendable {
     static func stableScene(
         bedElevation: [Float],
         waterDepth: [Float],
-        visualWetThreshold: Float = 1.0e-6
+        visualWetThreshold: Float = ShorelineDrying.visualFilmDepth
     ) -> DecorativeMapConfiguration {
         let bedRange = ScalarRange.finiteRange(of: bedElevation)
         let representativeDepth = max(
@@ -188,7 +195,7 @@ enum ColorMap {
               waterDepth >= 0,
               configuration.isValid else { return invalid }
         let land = terrainBase(bedElevation, configuration: configuration)
-        guard waterDepth > 0 else { return land }
+        guard waterDepth > configuration.visualWetThreshold else { return land }
         let cooledBed = submergedTerrainBase(
             bedElevation,
             configuration: configuration

@@ -17,3 +17,6 @@ DerivedData/
 # Standalone C++ build artifacts
 *.o
 *.dSYM/
+
+Assets/TideMaps/
+Docs/MapAssets/

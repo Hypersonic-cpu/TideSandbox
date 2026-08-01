@@ -13,7 +13,7 @@ struct HeightField3DView: View {
                 cameraYawDegrees: Float(model.cameraYawDegrees),
                 cameraPitchDegrees: Float(model.cameraPitchDegrees),
                 cameraFitRequestID: model.cameraFitRequestID,
-                minimumWetDepth: Float(model.minimumWetDepth),
+                minimumWetDepth: Float(model.visualWetDepth),
                 settings: model.render3DSettings,
                 terrainTool: model.tool,
                 brushPreviewPoint: model.brushPreviewPoint,
