@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Boundary.hh"
 #include "Grid.hh"
 
 #include <cmath>
@@ -33,8 +34,18 @@ public:
     [[nodiscard]] bool initializeDepth(GridGeometry geometry,
                                        std::span<const double> bedElevation,
                                        std::span<const double> waterDepth,
-                                       WorldLimits limits = {}) noexcept;
+                                       WorldLimits limits = {},
+                                       BoundaryConfiguration boundaries = {}) noexcept;
     void reset() noexcept;
+    [[nodiscard]] bool setBoundaryConfiguration(BoundaryConfiguration boundaries) noexcept;
+    [[nodiscard]] bool restoreCurrentState(
+        std::span<const double> bedElevation,
+        std::span<const double> waterDepth,
+        std::span<const double> velX,
+        std::span<const double> velY,
+        double time,
+        BoundaryValues cumulativeBoundaryVolume,
+        double accumulatedEditWaterVolume) noexcept;
 
     [[nodiscard]] const GridGeometry& geometry() const noexcept { return geometry_; }
     [[nodiscard]] const CellField& bedElevation() const noexcept { return bedElevation_; }
@@ -48,6 +59,16 @@ public:
         return initialWaterDepth_;
     }
     [[nodiscard]] const WorldLimits& worldLimits() const noexcept { return worldLimits_; }
+    [[nodiscard]] const BoundaryConfiguration& boundaryConfiguration() const noexcept {
+        return boundaryConfiguration_;
+    }
+    [[nodiscard]] const BoundaryValues& cumulativeBoundaryVolume() const noexcept {
+        return cumulativeBoundaryVolume_;
+    }
+    [[nodiscard]] double initialWaterVolume() const noexcept { return initialWaterVolume_; }
+    [[nodiscard]] double accumulatedEditWaterVolume() const noexcept {
+        return accumulatedEditWaterVolume_;
+    }
     [[nodiscard]] double time() const noexcept { return time_; }
     [[nodiscard]] bool isInitialized() const noexcept { return geometry_.isValid(); }
 
@@ -62,6 +83,10 @@ private:
     CellField initialBedElevation_;
     CellField initialWaterDepth_;
     WorldLimits worldLimits_;
+    BoundaryConfiguration boundaryConfiguration_;
+    BoundaryValues cumulativeBoundaryVolume_{};
+    double initialWaterVolume_ = 0.0;
+    double accumulatedEditWaterVolume_ = 0.0;
     double time_ = 0.0;
 
     friend class WeakNonlinearSolver;

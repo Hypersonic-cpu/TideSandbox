@@ -31,6 +31,46 @@ typedef NS_ENUM(NSInteger, WSMaterialOperation) {
     WSMaterialOperationRemoveWater,
 };
 
+typedef NS_ENUM(NSInteger, WSBoundaryType) {
+    WSBoundaryTypeReflective = 0,
+    WSBoundaryTypeFreeOpen,
+    WSBoundaryTypeDrivenHeight,
+};
+
+@interface WSBoundarySideConfiguration : NSObject
+
+@property(nonatomic, readonly) WSBoundaryType type;
+@property(nonatomic, readonly) double meanSurfaceElevation;
+@property(nonatomic, readonly) double amplitude;
+@property(nonatomic, readonly) double periodSeconds;
+@property(nonatomic, readonly) double phaseRadians;
+@property(nonatomic, readonly) double rampSeconds;
+
+- (instancetype)initWithType:(WSBoundaryType)type
+         meanSurfaceElevation:(double)meanSurfaceElevation
+                    amplitude:(double)amplitude
+                periodSeconds:(double)periodSeconds
+                 phaseRadians:(double)phaseRadians
+                  rampSeconds:(double)rampSeconds NS_DESIGNATED_INITIALIZER;
+- (instancetype)init NS_UNAVAILABLE;
+
+@end
+
+@interface WSBoundaryConfiguration : NSObject
+
+@property(nonatomic, readonly) WSBoundarySideConfiguration *left;
+@property(nonatomic, readonly) WSBoundarySideConfiguration *right;
+@property(nonatomic, readonly) WSBoundarySideConfiguration *bottom;
+@property(nonatomic, readonly) WSBoundarySideConfiguration *top;
+
+- (instancetype)initWithLeft:(WSBoundarySideConfiguration *)left
+                        right:(WSBoundarySideConfiguration *)right
+                       bottom:(WSBoundarySideConfiguration *)bottom
+                          top:(WSBoundarySideConfiguration *)top NS_DESIGNATED_INITIALIZER;
+- (instancetype)init NS_UNAVAILABLE;
+
+@end
+
 @interface WSTerrainEditResult : NSObject
 
 @property(nonatomic, readonly) BOOL succeeded;
@@ -59,6 +99,11 @@ typedef NS_ENUM(NSInteger, WSMaterialOperation) {
 @property(nonatomic, readonly) NSUInteger substepCount;
 @property(nonatomic, readonly) NSUInteger wetCellCount;
 @property(nonatomic, readonly) NSUInteger correctionCount;
+@property(nonatomic, readonly) NSArray<NSNumber *> *instantaneousBoundaryOutflowRate;
+@property(nonatomic, readonly) NSArray<NSNumber *> *cumulativeBoundaryOutwardVolume;
+@property(nonatomic, readonly) double netBoundaryOutflowRate;
+@property(nonatomic, readonly) double accountedExpectedVolume;
+@property(nonatomic, readonly) double accountingError;
 @property(nonatomic, readonly, getter=isFinite) BOOL finite;
 @property(nonatomic, readonly) WSEngineStepStatus status;
 
@@ -109,10 +154,22 @@ typedef NS_ENUM(NSInteger, WSMaterialOperation) {
          minimumBed:(double)minimumBed
      maximumSurface:(double)maximumSurface
     NS_SWIFT_NAME(load(width:height:domainWidth:domainHeight:bedElevation:waterDepth:minimumBed:maximumSurface:));
+- (BOOL)loadWidth:(NSUInteger)width
+            height:(NSUInteger)height
+       domainWidth:(double)domainWidth
+      domainHeight:(double)domainHeight
+      bedElevation:(NSData *)bedElevation
+         waterDepth:(NSData *)waterDepth
+         minimumBed:(double)minimumBed
+     maximumSurface:(double)maximumSurface
+         boundaries:(WSBoundaryConfiguration *)boundaries
+    NS_SWIFT_NAME(load(width:height:domainWidth:domainHeight:bedElevation:waterDepth:minimumBed:maximumSurface:boundaries:));
 - (void)reset;
 - (WSEngineStepStatus)advance:(double)frameDeltaTime;
 - (WSEngineStepStatus)stepOnce:(double)timeStep;
 - (WSEngineSnapshot *)snapshot;
+- (WSBoundaryConfiguration *)boundaryConfiguration;
+- (BOOL)setBoundaryConfiguration:(WSBoundaryConfiguration *)configuration;
 
 - (BOOL)updateGravity:(double)gravity
         linearDamping:(double)linearDamping

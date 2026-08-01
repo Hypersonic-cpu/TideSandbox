@@ -632,14 +632,10 @@ final class DisplayTests: XCTestCase {
 
 @MainActor
 final class BridgeTests: XCTestCase {
-    func testEveryBuiltInPresetIsFiniteLevelWaterAndLoadsThroughBridge() throws {
+    func testEveryBuiltInPresetHasValidatedHydrographyAndLoadsThroughBridge() throws {
         for preset in SimulationPreset.allCases {
             let seed = preset.makeSeed()
             let count = seed.width * seed.height
-            let expectedSurfaceLevel: Double = switch preset {
-            case .flat16, .centerBump32, .unevenBed128: 4
-            case .coastChannel512: 2
-            }
 
             XCTAssertEqual(seed.height, seed.width, "\(preset.title) must be square")
             XCTAssertEqual(seed.bedElevation.count, count)
@@ -653,25 +649,34 @@ final class BridgeTests: XCTestCase {
             let surfaceRange = try XCTUnwrap(wetSurfaces.min()).distance(
                 to: try XCTUnwrap(wetSurfaces.max())
             )
-            XCTAssertLessThanOrEqual(
-                abs(surfaceRange),
-                4 * Double(Float.ulpOfOne),
-                "\(preset.title) should initialize as level water"
-            )
-            XCTAssertEqual(
-                try XCTUnwrap(wetSurfaces.min()),
-                expectedSurfaceLevel,
-                accuracy: 4 * Double(Float.ulpOfOne)
-            )
-            XCTAssertEqual(
-                try XCTUnwrap(wetSurfaces.max()),
-                expectedSurfaceLevel,
-                accuracy: 4 * Double(Float.ulpOfOne)
-            )
-            if preset == .coastChannel512 {
-                XCTAssertGreaterThan(try XCTUnwrap(seed.waterDepth.min()), 1)
-            } else {
+            switch preset {
+            case .flat16, .centerBump32, .unevenBed128:
+                XCTAssertLessThanOrEqual(abs(surfaceRange), 4 * Double(Float.ulpOfOne))
+                XCTAssertEqual(try XCTUnwrap(wetSurfaces.min()), 4,
+                               accuracy: 4 * Double(Float.ulpOfOne))
+                XCTAssertEqual(try XCTUnwrap(wetSurfaces.max()), 4,
+                               accuracy: 4 * Double(Float.ulpOfOne))
                 XCTAssertGreaterThan(try XCTUnwrap(seed.waterDepth.min()), 3.5)
+            case .coastChannel512, .drivenOceanWave512:
+                let dryFraction = Double(seed.waterDepth.lazy.filter { $0 == 0 }.count) /
+                    Double(count)
+                XCTAssertGreaterThanOrEqual(dryFraction, 0.02)
+                XCTAssertLessThanOrEqual(dryFraction, 0.35)
+                if preset == .coastChannel512 {
+                    XCTAssertGreaterThanOrEqual(abs(surfaceRange), 0.50)
+                    let leftMean = meanWetSurface(seed: seed, columns: 0..<384)
+                    let rightMean = meanWetSurface(seed: seed, columns: 420..<512)
+                    XCTAssertGreaterThanOrEqual(rightMean - leftMean, 0.45)
+                    XCTAssertTrue(hasWetConnectionFromRaisedBand(seed: seed))
+                    XCTAssertEqual(seed.boundaries, .reflective)
+                } else {
+                    XCTAssertLessThanOrEqual(abs(surfaceRange), 8 * Double(Float.ulpOfOne))
+                    XCTAssertEqual(seed.boundaries.right.type, .drivenHeight)
+                    XCTAssertEqual(seed.boundaries.right.meanSurfaceElevation, 1.2)
+                    XCTAssertEqual(seed.boundaries.right.amplitude, 0.25)
+                    XCTAssertEqual(seed.boundaries.right.periodSeconds, 8)
+                    XCTAssertEqual(seed.boundaries.right.rampSeconds, 2)
+                }
             }
 
             let bridge = WSWaterEngineBridge(
@@ -686,7 +691,10 @@ final class BridgeTests: XCTestCase {
                 domainWidth: seed.domainWidth,
                 domainHeight: seed.domainHeight,
                 bedElevation: seed.bedData,
-                waterDepth: seed.depthData
+                waterDepth: seed.depthData,
+                minimumBed: seed.worldLimits.minimumBedElevation,
+                maximumSurface: seed.worldLimits.maximumSurfaceElevation,
+                boundaries: seed.boundaries.bridgeConfiguration
             ))
             let snapshot = SimulationSnapshot(bridge.snapshot())
             XCTAssertEqual(snapshot.width, seed.width)
@@ -695,7 +703,59 @@ final class BridgeTests: XCTestCase {
             XCTAssertEqual(snapshot.waterDepth.count, count)
             XCTAssertEqual(snapshot.wetMask.count, count)
             XCTAssertTrue(snapshot.diagnostics.isFinite)
+            XCTAssertTrue(snapshot.velocityMagnitude.allSatisfy { $0 == 0 })
         }
+    }
+
+    private func meanWetSurface(seed: SceneSeed, columns: Range<Int>) -> Double {
+        var sum = 0.0
+        var count = 0
+        for row in 0..<seed.height {
+            for column in columns {
+                precondition(column < seed.width)
+                let index = row * seed.width + column
+                guard seed.waterDepth[index] > 0 else { continue }
+                sum += Double(seed.bedElevation[index] + seed.waterDepth[index])
+                count += 1
+            }
+        }
+        return sum / Double(count)
+    }
+
+    private func hasWetConnectionFromRaisedBand(seed: SceneSeed) -> Bool {
+        var visited = [Bool](repeating: false, count: seed.width * seed.height)
+        var queue = [Int]()
+        for row in 0..<seed.height {
+            for column in Int(Double(seed.width) * 0.82)..<seed.width {
+                let index = row * seed.width + column
+                if seed.waterDepth[index] > 0 {
+                    visited[index] = true
+                    queue.append(index)
+                }
+            }
+        }
+        var cursor = 0
+        while cursor < queue.count {
+            let index = queue[cursor]
+            cursor += 1
+            let column = index % seed.width
+            let row = index / seed.width
+            if Double(column) / Double(seed.width) <= 0.75 { return true }
+            let neighbors = [
+                (column - 1, row), (column + 1, row),
+                (column, row - 1), (column, row + 1),
+            ]
+            for (nextColumn, nextRow) in neighbors
+            where nextColumn >= 0 && nextColumn < seed.width &&
+                nextRow >= 0 && nextRow < seed.height {
+                let next = nextRow * seed.width + nextColumn
+                if !visited[next], seed.waterDepth[next] > 0 {
+                    visited[next] = true
+                    queue.append(next)
+                }
+            }
+        }
+        return false
     }
 
     func testSnapshotControlsAndTerrainCommands() throws {

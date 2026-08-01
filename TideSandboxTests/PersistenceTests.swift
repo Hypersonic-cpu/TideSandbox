@@ -268,28 +268,121 @@ final class PersistenceTests: XCTestCase {
 
     func testBundledScenesAreCompleteReadOnlyPackagesAtEveryRequiredScale() throws {
         let urls = BuiltInSceneResources.packageURLs()
-        XCTAssertEqual(urls.count, 4)
+        XCTAssertEqual(urls.count, 5)
         let documents = try urls.map {
             try ScenePackageCodec.read(from: $0, isReadOnly: true)
         }
-        XCTAssertEqual(Set(documents.map { $0.manifest.id }).count, 4)
-        XCTAssertEqual(documents.map { $0.manifest.gridWidth }.sorted(), [16, 32, 128, 512])
+        XCTAssertEqual(Set(documents.map { $0.manifest.id }).count, 5)
+        XCTAssertEqual(documents.map { $0.manifest.gridWidth }.sorted(), [16, 32, 128, 512, 512])
         XCTAssertTrue(documents.allSatisfy { $0.manifest.source == .builtIn && $0.isReadOnly })
         XCTAssertTrue(documents.allSatisfy { $0.previewPNG != nil })
         XCTAssertTrue(documents.contains { $0.manifest.tags.contains("coast") })
         let expectedSeeds = Dictionary(uniqueKeysWithValues: SimulationPreset.allCases.map {
-            let seed = $0.makeSeed()
-            return (seed.width, seed)
+            ($0.title, $0.makeSeed())
         })
         for document in documents {
             let count = document.manifest.gridWidth * document.manifest.gridHeight
             XCTAssertEqual(document.bedElevation.count, count)
             XCTAssertEqual(document.initialWaterDepth.count, count)
             XCTAssertTrue(document.initialWaterDepth.allSatisfy { $0.isFinite && $0 >= 0 })
-            let expectedSeed = try XCTUnwrap(expectedSeeds[document.manifest.gridWidth])
+            let expectedSeed = try XCTUnwrap(expectedSeeds[document.manifest.name])
             XCTAssertEqual(document.bedElevation, expectedSeed.bedElevation)
             XCTAssertEqual(document.initialWaterDepth, expectedSeed.waterDepth)
+            XCTAssertEqual(document.manifest.resolvedBoundaries, expectedSeed.boundaries)
         }
+    }
+
+    func testBoundaryManifestMigrationRoundTripAndValidation() throws {
+        let root = temporaryDirectory()
+        let packageURL = root.appendingPathComponent("boundaries.waterscene")
+        let legacy = try makeDocument(id: UUID(), name: "Legacy", width: 8, height: 8)
+        try ScenePackageCodec.writeAtomically(legacy, to: packageURL)
+        let legacyManifestURL = packageURL.appendingPathComponent("manifest.json")
+        let legacyJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: legacyManifestURL)) as? [String: Any]
+        )
+        XCTAssertNil(legacyJSON["boundaries"])
+        XCTAssertEqual(try ScenePackageCodec.read(from: packageURL).manifest.resolvedBoundaries,
+                       .reflective)
+
+        let driven = SceneBoundaryConfiguration(
+            left: .freeOpen,
+            right: .drivenHeight(
+                meanSurfaceElevation: 1.2,
+                amplitude: 0.25,
+                periodSeconds: 8,
+                phaseRadians: 0.3,
+                rampSeconds: 2
+            ),
+            bottom: .reflective,
+            top: .freeOpen
+        )
+        let source = legacy.manifest
+        let drivenManifest = SceneManifest(
+            id: source.id,
+            name: "Driven",
+            createdAt: source.createdAt,
+            modifiedAt: source.modifiedAt,
+            gridWidth: source.gridWidth,
+            gridHeight: source.gridHeight,
+            domainWidth: source.domainWidth,
+            domainHeight: source.domainHeight,
+            boundaries: driven,
+            resources: source.resources,
+            source: source.source,
+            description: source.description,
+            tags: source.tags
+        )
+        let drivenDocument = SceneDocument(
+            manifest: drivenManifest,
+            bedElevation: legacy.bedElevation,
+            initialWaterDepth: legacy.initialWaterDepth,
+            previewPNG: legacy.previewPNG
+        )
+        try ScenePackageCodec.writeAtomically(drivenDocument, to: packageURL)
+        XCTAssertEqual(try ScenePackageCodec.read(from: packageURL).manifest.resolvedBoundaries,
+                       driven)
+
+        var unknownJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: legacyManifestURL)) as? [String: Any]
+        )
+        var boundaryJSON = try XCTUnwrap(unknownJSON["boundaries"] as? [String: Any])
+        var rightJSON = try XCTUnwrap(boundaryJSON["right"] as? [String: Any])
+        rightJSON["type"] = "notABoundary"
+        boundaryJSON["right"] = rightJSON
+        unknownJSON["boundaries"] = boundaryJSON
+        try JSONSerialization.data(withJSONObject: unknownJSON).write(to: legacyManifestURL)
+        XCTAssertThrowsError(try ScenePackageCodec.read(from: packageURL)) { error in
+            guard case ScenePackageError.invalidManifest = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+
+        let invalid = SceneBoundaryConfiguration(
+            left: .reflective,
+            right: .drivenHeight(
+                meanSurfaceElevation: 1,
+                amplitude: 0.1,
+                periodSeconds: 0,
+                phaseRadians: 0,
+                rampSeconds: 0
+            ),
+            bottom: .reflective,
+            top: .reflective
+        )
+        let invalidManifest = SceneManifest(
+            id: UUID(),
+            name: "Invalid driven",
+            createdAt: source.createdAt,
+            modifiedAt: source.modifiedAt,
+            gridWidth: 8,
+            gridHeight: 8,
+            domainWidth: 8,
+            domainHeight: 8,
+            boundaries: invalid,
+            source: .user
+        )
+        XCTAssertThrowsError(try ScenePackageCodec.manifestData(invalidManifest))
     }
 
     func testWorldLimitsRoundTripLegacyDefaultAndRejectOutOfBoundsFields() throws {
@@ -423,6 +516,7 @@ final class PersistenceTests: XCTestCase {
             initializationMode: source.initializationMode,
             solver: source.solver,
             worldLimits: source.resolvedWorldLimits,
+            boundaries: source.boundaries,
             resources: source.resources,
             source: source.source,
             description: source.description,

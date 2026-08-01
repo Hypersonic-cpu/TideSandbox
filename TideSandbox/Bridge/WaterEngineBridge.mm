@@ -63,6 +63,24 @@ struct BridgeImplementation final {
     }
 }
 
+[[nodiscard]] BoundaryType engineBoundaryType(const WSBoundaryType type) noexcept {
+    switch (type) {
+    case WSBoundaryTypeReflective: return BoundaryType::reflective;
+    case WSBoundaryTypeFreeOpen: return BoundaryType::freeOpen;
+    case WSBoundaryTypeDrivenHeight: return BoundaryType::drivenHeight;
+    }
+    return BoundaryType::reflective;
+}
+
+[[nodiscard]] WSBoundaryType bridgeBoundaryType(const BoundaryType type) noexcept {
+    switch (type) {
+    case BoundaryType::reflective: return WSBoundaryTypeReflective;
+    case BoundaryType::freeOpen: return WSBoundaryTypeFreeOpen;
+    case BoundaryType::drivenHeight: return WSBoundaryTypeDrivenHeight;
+    }
+    return WSBoundaryTypeReflective;
+}
+
 struct FreeDeleter final {
     void operator()(void *pointer) const noexcept { std::free(pointer); }
 };
@@ -103,6 +121,119 @@ private:
     std::transform(values.begin(), values.end(), result.begin(),
                    [](const float value) { return static_cast<double>(value); });
     return result;
+}
+
+} // namespace
+
+@interface WSBoundarySideConfiguration ()
+
+@property(nonatomic, readwrite) WSBoundaryType type;
+@property(nonatomic, readwrite) double meanSurfaceElevation;
+@property(nonatomic, readwrite) double amplitude;
+@property(nonatomic, readwrite) double periodSeconds;
+@property(nonatomic, readwrite) double phaseRadians;
+@property(nonatomic, readwrite) double rampSeconds;
+
+@end
+
+@implementation WSBoundarySideConfiguration
+
+- (instancetype)initWithType:(WSBoundaryType)type
+         meanSurfaceElevation:(double)meanSurfaceElevation
+                    amplitude:(double)amplitude
+                periodSeconds:(double)periodSeconds
+                 phaseRadians:(double)phaseRadians
+                  rampSeconds:(double)rampSeconds {
+    self = [super init];
+    if (self != nil) {
+        _type = type;
+        _meanSurfaceElevation = meanSurfaceElevation;
+        _amplitude = amplitude;
+        _periodSeconds = periodSeconds;
+        _phaseRadians = phaseRadians;
+        _rampSeconds = rampSeconds;
+    }
+    return self;
+}
+
+@end
+
+
+@interface WSBoundaryConfiguration ()
+
+@property(nonatomic, readwrite) WSBoundarySideConfiguration *left;
+@property(nonatomic, readwrite) WSBoundarySideConfiguration *right;
+@property(nonatomic, readwrite) WSBoundarySideConfiguration *bottom;
+@property(nonatomic, readwrite) WSBoundarySideConfiguration *top;
+
+@end
+
+
+@implementation WSBoundaryConfiguration
+
+- (instancetype)initWithLeft:(WSBoundarySideConfiguration *)left
+                        right:(WSBoundarySideConfiguration *)right
+                       bottom:(WSBoundarySideConfiguration *)bottom
+                          top:(WSBoundarySideConfiguration *)top {
+    self = [super init];
+    if (self != nil) {
+        _left = left;
+        _right = right;
+        _bottom = bottom;
+        _top = top;
+    }
+    return self;
+}
+
+@end
+
+
+namespace {
+
+[[nodiscard]] BoundarySide engineBoundarySide(WSBoundarySideConfiguration *source) noexcept {
+    return {
+        .type = engineBoundaryType(source.type),
+        .driven = {
+            .meanSurfaceElevation = source.meanSurfaceElevation,
+            .amplitude = source.amplitude,
+            .periodSeconds = source.periodSeconds,
+            .phaseRadians = source.phaseRadians,
+            .rampSeconds = source.rampSeconds,
+        },
+    };
+}
+
+[[nodiscard]] BoundaryConfiguration engineBoundaryConfiguration(
+    WSBoundaryConfiguration *source) noexcept {
+    return {
+        .left = engineBoundarySide(source.left),
+        .right = engineBoundarySide(source.right),
+        .bottom = engineBoundarySide(source.bottom),
+        .top = engineBoundarySide(source.top),
+    };
+}
+
+[[nodiscard]] WSBoundarySideConfiguration *bridgeBoundarySide(const BoundarySide& source) {
+    return [[WSBoundarySideConfiguration alloc]
+        initWithType:bridgeBoundaryType(source.type)
+        meanSurfaceElevation:source.driven.meanSurfaceElevation
+        amplitude:source.driven.amplitude
+        periodSeconds:source.driven.periodSeconds
+        phaseRadians:source.driven.phaseRadians
+        rampSeconds:source.driven.rampSeconds];
+}
+
+[[nodiscard]] WSBoundaryConfiguration *bridgeBoundaryConfiguration(
+    const BoundaryConfiguration& source) {
+    return [[WSBoundaryConfiguration alloc]
+        initWithLeft:bridgeBoundarySide(source.left)
+        right:bridgeBoundarySide(source.right)
+        bottom:bridgeBoundarySide(source.bottom)
+        top:bridgeBoundarySide(source.top)];
+}
+
+[[nodiscard]] NSArray<NSNumber *> *bridgeBoundaryValues(const BoundaryValues& source) {
+    return @[@(source[0]), @(source[1]), @(source[2]), @(source[3])];
 }
 
 } // namespace
@@ -156,6 +287,11 @@ namespace {
 @property(nonatomic, readwrite) NSUInteger substepCount;
 @property(nonatomic, readwrite) NSUInteger wetCellCount;
 @property(nonatomic, readwrite) NSUInteger correctionCount;
+@property(nonatomic, readwrite) NSArray<NSNumber *> *instantaneousBoundaryOutflowRate;
+@property(nonatomic, readwrite) NSArray<NSNumber *> *cumulativeBoundaryOutwardVolume;
+@property(nonatomic, readwrite) double netBoundaryOutflowRate;
+@property(nonatomic, readwrite) double accountedExpectedVolume;
+@property(nonatomic, readwrite) double accountingError;
 @property(nonatomic, readwrite, getter=isFinite) BOOL finite;
 @property(nonatomic, readwrite) WSEngineStepStatus status;
 
@@ -238,6 +374,21 @@ namespace {
          waterDepth:(NSData *)waterDepth
          minimumBed:(double)minimumBed
      maximumSurface:(double)maximumSurface {
+    const BoundaryConfiguration reflective;
+    return [self loadWidth:width height:height domainWidth:domainWidth domainHeight:domainHeight
+              bedElevation:bedElevation waterDepth:waterDepth minimumBed:minimumBed
+            maximumSurface:maximumSurface boundaries:bridgeBoundaryConfiguration(reflective)];
+}
+
+- (BOOL)loadWidth:(NSUInteger)width
+            height:(NSUInteger)height
+       domainWidth:(double)domainWidth
+      domainHeight:(double)domainHeight
+      bedElevation:(NSData *)bedElevation
+         waterDepth:(NSData *)waterDepth
+         minimumBed:(double)minimumBed
+     maximumSurface:(double)maximumSurface
+         boundaries:(WSBoundaryConfiguration *)boundaries {
     if (width < 8 || height < 8 || width > std::numeric_limits<std::size_t>::max() / height) {
         return NO;
     }
@@ -251,7 +402,9 @@ namespace {
     auto& impl = implementation(_implementation);
     const GridGeometry geometry{static_cast<std::size_t>(width), static_cast<std::size_t>(height),
                                 domainWidth, domainHeight};
-    if (!impl.state.initializeDepth(geometry, bed, depth, {minimumBed, maximumSurface})) {
+    const BoundaryConfiguration engineBoundaries = engineBoundaryConfiguration(boundaries);
+    if (!impl.state.initializeDepth(geometry, bed, depth, {minimumBed, maximumSurface},
+                                    engineBoundaries)) {
         return NO;
     }
     impl.solver = std::make_unique<WeakNonlinearSolver>(impl.state, impl.configuration);
@@ -263,6 +416,20 @@ namespace {
     }
     impl.running = false;
     return YES;
+}
+
+- (WSBoundaryConfiguration *)boundaryConfiguration {
+    return bridgeBoundaryConfiguration(implementation(_implementation).state.boundaryConfiguration());
+}
+
+- (BOOL)setBoundaryConfiguration:(WSBoundaryConfiguration *)configuration {
+    auto& impl = implementation(_implementation);
+    const BOOL changed = impl.solver->setBoundaryConfiguration(
+        engineBoundaryConfiguration(configuration));
+    if (changed) {
+        impl.running = false;
+    }
+    return changed;
 }
 
 - (void)reset {
@@ -333,6 +500,13 @@ namespace {
     diagnostics.substepCount = sourceDiagnostics.substepCount;
     diagnostics.wetCellCount = sourceDiagnostics.wetCellCount;
     diagnostics.correctionCount = sourceDiagnostics.correctionCount;
+    diagnostics.instantaneousBoundaryOutflowRate = bridgeBoundaryValues(
+        sourceDiagnostics.instantaneousBoundaryOutflowRate);
+    diagnostics.cumulativeBoundaryOutwardVolume = bridgeBoundaryValues(
+        sourceDiagnostics.cumulativeBoundaryOutwardVolume);
+    diagnostics.netBoundaryOutflowRate = sourceDiagnostics.netBoundaryOutflowRate;
+    diagnostics.accountedExpectedVolume = sourceDiagnostics.accountedExpectedVolume;
+    diagnostics.accountingError = sourceDiagnostics.accountingError;
     diagnostics.finite = sourceDiagnostics.finite;
     diagnostics.status = bridgeStatus(sourceDiagnostics.status);
 

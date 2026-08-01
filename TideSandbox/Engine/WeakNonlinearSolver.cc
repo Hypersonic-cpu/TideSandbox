@@ -67,6 +67,59 @@ struct HydrostaticFace final {
     };
 }
 
+[[nodiscard]] HydrostaticFace reconstructBoundaryFace(
+    const BoundarySide& boundary,
+    const double interiorBed,
+    const double interiorDepth,
+    const double time,
+    const double minimumWetDepth) noexcept {
+    switch (boundary.type) {
+    case BoundaryType::reflective:
+        return {};
+    case BoundaryType::freeOpen:
+        return reconstructFace(interiorBed, interiorDepth, interiorBed, interiorDepth,
+                               minimumWetDepth);
+    case BoundaryType::drivenHeight: {
+        const double reservoirSurface = boundary.driven.surfaceElevation(time);
+        const double reservoirDepth = std::max(reservoirSurface - interiorBed, 0.0);
+        return reconstructFace(interiorBed, interiorDepth, interiorBed, reservoirDepth,
+                               minimumWetDepth);
+    }
+    }
+    return {};
+}
+
+[[nodiscard]] double updateBoundaryOutwardVelocity(
+    const BoundarySide& boundary,
+    const double oldOutwardVelocity,
+    const double interiorBed,
+    const double interiorDepth,
+    const double time,
+    const double velocityFactor,
+    const double minimumWetDepth) noexcept {
+    const HydrostaticFace hydro = reconstructBoundaryFace(
+        boundary, interiorBed, interiorDepth, time, minimumWetDepth);
+    if (boundary.type == BoundaryType::reflective ||
+        (hydro.firstDepth == 0.0 && hydro.secondDepth == 0.0)) {
+        return 0.0;
+    }
+    return oldOutwardVelocity - velocityFactor *
+        (hydro.secondSurface - hydro.firstSurface);
+}
+
+[[nodiscard]] double boundaryOutwardFlux(
+    const BoundarySide& boundary,
+    const double outwardVelocity,
+    const double interiorBed,
+    const double interiorDepth,
+    const double time,
+    const double minimumWetDepth) noexcept {
+    const HydrostaticFace hydro = reconstructBoundaryFace(
+        boundary, interiorBed, interiorDepth, time, minimumWetDepth);
+    const double donorDepth = outwardVelocity >= 0.0 ? hydro.firstDepth : hydro.secondDepth;
+    return donorDepth * outwardVelocity;
+}
+
 } // namespace
 
 bool SolverConfiguration::isValid() const noexcept {
@@ -101,6 +154,16 @@ bool WeakNonlinearSolver::setConfiguration(SolverConfiguration configuration) no
     return true;
 }
 
+bool WeakNonlinearSolver::setBoundaryConfiguration(
+    BoundaryConfiguration configuration) noexcept {
+    if (!state_.setBoundaryConfiguration(configuration)) {
+        return false;
+    }
+    instantaneousBoundaryOutflowRate_.fill(0.0);
+    stateWasEdited();
+    return true;
+}
+
 double WeakNonlinearSolver::stableTimeStep() noexcept {
     const ScopedProfileTimer profileTimer(configuration_.collectPerformanceCounters,
                                           performanceCounters_.stableTimeStepSeconds);
@@ -117,6 +180,38 @@ double WeakNonlinearSolver::stableTimeStep() noexcept {
             return 0.0;
         }
         maximumDepth = std::max(maximumDepth, depth);
+    }
+
+    const BoundaryConfiguration& boundaries = state_.boundaryConfiguration_;
+    const double time = state_.time_;
+    const auto includeDrivenReservoirDepth = [&](const BoundarySide& side,
+                                                  const BoundaryEdge edge) noexcept -> bool {
+        if (side.type != BoundaryType::drivenHeight) {
+            return true;
+        }
+        const double surface = side.driven.surfaceElevation(time);
+        if (!std::isfinite(surface)) {
+            return false;
+        }
+        const std::size_t count = edge == BoundaryEdge::left || edge == BoundaryEdge::right
+            ? state_.geometry_.height : state_.geometry_.width;
+        for (std::size_t index = 0; index < count; ++index) {
+            const std::size_t column = edge == BoundaryEdge::left ? 0 :
+                (edge == BoundaryEdge::right ? state_.geometry_.width - 1 : index);
+            const std::size_t row = edge == BoundaryEdge::bottom ? 0 :
+                (edge == BoundaryEdge::top ? state_.geometry_.height - 1 : index);
+            maximumDepth = std::max(maximumDepth,
+                                    std::max(surface - state_.bedElevation_(column, row), 0.0));
+        }
+        return true;
+    };
+    if (!includeDrivenReservoirDepth(boundaries.left, BoundaryEdge::left) ||
+        !includeDrivenReservoirDepth(boundaries.right, BoundaryEdge::right) ||
+        !includeDrivenReservoirDepth(boundaries.bottom, BoundaryEdge::bottom) ||
+        !includeDrivenReservoirDepth(boundaries.top, BoundaryEdge::top)) {
+        diagnostics_.status = StepStatus::nonFiniteState;
+        diagnostics_.finite = false;
+        return 0.0;
     }
 
     double maximumVelX = 0.0;
@@ -218,6 +313,7 @@ StepStatus WeakNonlinearSolver::advance(double frameDeltaTime) noexcept {
 
 void WeakNonlinearSolver::resetDiagnostics() noexcept {
     diagnostics_ = {};
+    instantaneousBoundaryOutflowRate_.fill(0.0);
 }
 
 void WeakNonlinearSolver::stateWasEdited() noexcept {
@@ -243,6 +339,8 @@ StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
     const auto height = state_.geometry_.height;
     const auto inverseDx = 1.0 / state_.geometry_.dx();
     const auto inverseDy = 1.0 / state_.geometry_.dy();
+    const BoundaryConfiguration& boundaries = state_.boundaryConfiguration_;
+    const double boundaryTime = state_.time_;
 
     const auto surfaceStart = profileStart(configuration_.collectPerformanceCounters);
     forRows(height, width * height, [this, width](std::size_t begin, std::size_t end) noexcept {
@@ -294,27 +392,70 @@ StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
             }
         }
     });
+    forRows(height, 2 * height,
+            [this, width, velocityFactor, boundaryTime, &boundaries](
+                std::size_t begin, std::size_t end) noexcept {
+        for (auto row = begin; row < end; ++row) {
+            const double leftOutward = updateBoundaryOutwardVelocity(
+                boundaries.left, -state_.velX_(0, row),
+                state_.bedElevation_(0, row), state_.waterDepth_(0, row), boundaryTime,
+                velocityFactor, configuration_.minimumWetDepth);
+            state_.velX_(0, row) = -leftOutward;
+            const double rightOutward = updateBoundaryOutwardVelocity(
+                boundaries.right, state_.velX_(width, row),
+                state_.bedElevation_(width - 1, row), state_.waterDepth_(width - 1, row),
+                boundaryTime, velocityFactor, configuration_.minimumWetDepth);
+            state_.velX_(width, row) = rightOutward;
+        }
+    });
+    forRows(width, 2 * width,
+            [this, height, verticalVelocityFactor, boundaryTime, &boundaries](
+                std::size_t begin, std::size_t end) noexcept {
+        for (auto column = begin; column < end; ++column) {
+            const double bottomOutward = updateBoundaryOutwardVelocity(
+                boundaries.bottom, -state_.velY_(column, 0),
+                state_.bedElevation_(column, 0), state_.waterDepth_(column, 0), boundaryTime,
+                verticalVelocityFactor, configuration_.minimumWetDepth);
+            state_.velY_(column, 0) = -bottomOutward;
+            const double topOutward = updateBoundaryOutwardVelocity(
+                boundaries.top, state_.velY_(column, height),
+                state_.bedElevation_(column, height - 1),
+                state_.waterDepth_(column, height - 1), boundaryTime,
+                verticalVelocityFactor, configuration_.minimumWetDepth);
+            state_.velY_(column, height) = topOutward;
+        }
+    });
     profileFinish(configuration_.collectPerformanceCounters,
                   performanceCounters_.pressureSeconds, pressureStart);
 
     const auto dampingStart = profileStart(configuration_.collectPerformanceCounters);
     const auto damping = std::exp(-configuration_.linearDamping * timeStep);
-    forRows(height, state_.velX_.size(), [this, width, damping](std::size_t begin,
-                                                               std::size_t end) noexcept {
+    forRows(height, state_.velX_.size(), [this, width, damping, &boundaries](std::size_t begin,
+                                                                            std::size_t end) noexcept {
         for (auto row = begin; row < end; ++row) {
-            state_.velX_(0, row) = 0.0;
+            state_.velX_(0, row) = boundaries.left.type == BoundaryType::reflective
+                ? 0.0 : state_.velX_(0, row) * damping;
             for (std::size_t face = 1; face < width; ++face) {
                 state_.velX_(face, row) *= damping;
             }
-            state_.velX_(width, row) = 0.0;
+            state_.velX_(width, row) = boundaries.right.type == BoundaryType::reflective
+                ? 0.0 : state_.velX_(width, row) * damping;
         }
     });
-    forRows(height + 1, state_.velY_.size(), [this, width, height, damping](std::size_t begin,
-                                                                          std::size_t end) noexcept {
+    forRows(height + 1, state_.velY_.size(),
+            [this, width, height, damping, &boundaries](std::size_t begin,
+                                                        std::size_t end) noexcept {
         for (auto row = begin; row < end; ++row) {
             for (std::size_t column = 0; column < width; ++column) {
-                state_.velY_(column, row) = row == 0 || row == height
-                    ? 0.0 : state_.velY_(column, row) * damping;
+                if (row == 0) {
+                    state_.velY_(column, row) = boundaries.bottom.type == BoundaryType::reflective
+                        ? 0.0 : state_.velY_(column, row) * damping;
+                } else if (row == height) {
+                    state_.velY_(column, row) = boundaries.top.type == BoundaryType::reflective
+                        ? 0.0 : state_.velY_(column, row) * damping;
+                } else {
+                    state_.velY_(column, row) *= damping;
+                }
             }
         }
     });
@@ -322,10 +463,15 @@ StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
                   performanceCounters_.dampingSeconds, dampingStart);
 
     const auto fluxStart = profileStart(configuration_.collectPerformanceCounters);
-    forRows(height, fluxX_.size(), [this, width](std::size_t begin,
-                                                        std::size_t end) noexcept {
+    forRows(height, fluxX_.size(),
+            [this, width, boundaryTime, &boundaries](std::size_t begin,
+                                                     std::size_t end) noexcept {
         for (auto row = begin; row < end; ++row) {
-            fluxX_(0, row) = 0.0;
+            const double leftOutwardFlux = boundaryOutwardFlux(
+                boundaries.left, -state_.velX_(0, row),
+                state_.bedElevation_(0, row), state_.waterDepth_(0, row), boundaryTime,
+                configuration_.minimumWetDepth);
+            fluxX_(0, row) = -leftOutwardFlux;
             for (std::size_t face = 1; face < width; ++face) {
                 const double velocity = state_.velX_(face, row);
                 const HydrostaticFace hydro = reconstructFace(
@@ -335,15 +481,30 @@ StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
                 const double depth = velocity >= 0.0 ? hydro.firstDepth : hydro.secondDepth;
                 fluxX_(face, row) = depth * velocity;
             }
-            fluxX_(width, row) = 0.0;
+            fluxX_(width, row) = boundaryOutwardFlux(
+                boundaries.right, state_.velX_(width, row),
+                state_.bedElevation_(width - 1, row), state_.waterDepth_(width - 1, row),
+                boundaryTime, configuration_.minimumWetDepth);
         }
     });
-    forRows(height + 1, fluxY_.size(), [this, width, height](std::size_t begin,
-                                                                  std::size_t end) noexcept {
+    forRows(height + 1, fluxY_.size(),
+            [this, width, height, boundaryTime, &boundaries](std::size_t begin,
+                                                             std::size_t end) noexcept {
         for (auto row = begin; row < end; ++row) {
             for (std::size_t column = 0; column < width; ++column) {
-                if (row == 0 || row == height) {
-                    fluxY_(column, row) = 0.0;
+                if (row == 0) {
+                    fluxY_(column, row) = -boundaryOutwardFlux(
+                        boundaries.bottom, -state_.velY_(column, row),
+                        state_.bedElevation_(column, 0), state_.waterDepth_(column, 0),
+                        boundaryTime, configuration_.minimumWetDepth);
+                    continue;
+                }
+                if (row == height) {
+                    fluxY_(column, row) = boundaryOutwardFlux(
+                        boundaries.top, state_.velY_(column, row),
+                        state_.bedElevation_(column, height - 1),
+                        state_.waterDepth_(column, height - 1), boundaryTime,
+                        configuration_.minimumWetDepth);
                     continue;
                 }
                 const double velocity = state_.velY_(column, row);
@@ -384,10 +545,16 @@ StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
     forRows(height, (width - 1) * height,
             [this, width](std::size_t begin, std::size_t end) noexcept {
         for (auto row = begin; row < end; ++row) {
+            if (fluxX_(0, row) < 0.0) {
+                fluxX_(0, row) *= outgoingScale_(0, row);
+            }
             for (std::size_t face = 1; face < width; ++face) {
                 auto& flux = fluxX_(face, row);
                 flux *= flux >= 0.0 ? outgoingScale_(face - 1, row)
                                     : outgoingScale_(face, row);
+            }
+            if (fluxX_(width, row) > 0.0) {
+                fluxX_(width, row) *= outgoingScale_(width - 1, row);
             }
         }
     });
@@ -401,8 +568,34 @@ StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
             }
         }
     });
+    for (std::size_t column = 0; column < width; ++column) {
+        if (fluxY_(column, 0) < 0.0) {
+            fluxY_(column, 0) *= outgoingScale_(column, 0);
+        }
+        if (fluxY_(column, height) > 0.0) {
+            fluxY_(column, height) *= outgoingScale_(column, height - 1);
+        }
+    }
     profileFinish(configuration_.collectPerformanceCounters,
                   performanceCounters_.fluxLimitSeconds, fluxLimitStart);
+
+    BoundaryValues substepOutflowRates{};
+    for (std::size_t row = 0; row < height; ++row) {
+        substepOutflowRates[boundaryIndex(BoundaryEdge::left)] -=
+            state_.geometry_.dy() * fluxX_(0, row);
+        substepOutflowRates[boundaryIndex(BoundaryEdge::right)] +=
+            state_.geometry_.dy() * fluxX_(width, row);
+    }
+    for (std::size_t column = 0; column < width; ++column) {
+        substepOutflowRates[boundaryIndex(BoundaryEdge::bottom)] -=
+            state_.geometry_.dx() * fluxY_(column, 0);
+        substepOutflowRates[boundaryIndex(BoundaryEdge::top)] +=
+            state_.geometry_.dx() * fluxY_(column, height);
+    }
+    instantaneousBoundaryOutflowRate_ = substepOutflowRates;
+    for (std::size_t edge = 0; edge < boundaryEdgeCount; ++edge) {
+        state_.cumulativeBoundaryVolume_[edge] += timeStep * substepOutflowRates[edge];
+    }
 
     const auto continuityStart = profileStart(configuration_.collectPerformanceCounters);
     forRows(height, width * height,
@@ -470,6 +663,37 @@ StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
             }
         }
     });
+    const double cleanupBoundaryTime = boundaryTime + timeStep;
+    for (std::size_t row = 0; row < height; ++row) {
+        const double leftOutwardVelocity = -state_.velX_(0, row);
+        if (boundaryOutwardFlux(boundaries.left, leftOutwardVelocity,
+                                state_.bedElevation_(0, row), state_.waterDepth_(0, row),
+                                cleanupBoundaryTime, configuration_.minimumWetDepth) == 0.0) {
+            state_.velX_(0, row) = 0.0;
+        }
+        const double rightOutwardVelocity = state_.velX_(width, row);
+        if (boundaryOutwardFlux(boundaries.right, rightOutwardVelocity,
+                                state_.bedElevation_(width - 1, row),
+                                state_.waterDepth_(width - 1, row), cleanupBoundaryTime,
+                                configuration_.minimumWetDepth) == 0.0) {
+            state_.velX_(width, row) = 0.0;
+        }
+    }
+    for (std::size_t column = 0; column < width; ++column) {
+        const double bottomOutwardVelocity = -state_.velY_(column, 0);
+        if (boundaryOutwardFlux(boundaries.bottom, bottomOutwardVelocity,
+                                state_.bedElevation_(column, 0), state_.waterDepth_(column, 0),
+                                cleanupBoundaryTime, configuration_.minimumWetDepth) == 0.0) {
+            state_.velY_(column, 0) = 0.0;
+        }
+        const double topOutwardVelocity = state_.velY_(column, height);
+        if (boundaryOutwardFlux(boundaries.top, topOutwardVelocity,
+                                state_.bedElevation_(column, height - 1),
+                                state_.waterDepth_(column, height - 1), cleanupBoundaryTime,
+                                configuration_.minimumWetDepth) == 0.0) {
+            state_.velY_(column, height) = 0.0;
+        }
+    }
     profileFinish(configuration_.collectPerformanceCounters,
                   performanceCounters_.dryVelocitySeconds, dryVelocityStart);
 
@@ -485,6 +709,11 @@ StepStatus WeakNonlinearSolver::substep(double timeStep) noexcept {
 }
 
 StepStatus WeakNonlinearSolver::inspectFiniteState() noexcept {
+    if (!state_.boundaryConfiguration_.isValid(
+            state_.worldLimits_.minimumBedElevation,
+            state_.worldLimits_.maximumSurfaceElevation)) {
+        return StepStatus::nonFiniteState;
+    }
     for (std::size_t index = 0; index < state_.waterDepth_.size(); ++index) {
         const double bed = state_.bedElevation_.values()[index];
         const double depth = state_.waterDepth_.values()[index];
@@ -510,6 +739,11 @@ StepStatus WeakNonlinearSolver::inspectFiniteState() noexcept {
         if (configuration_.debugVelocityBound > 0.0 &&
             std::abs(velocity) > configuration_.debugVelocityBound) {
             return StepStatus::velocityBoundExceeded;
+        }
+    }
+    for (const double volume : state_.cumulativeBoundaryVolume_) {
+        if (!std::isfinite(volume)) {
+            return StepStatus::nonFiniteState;
         }
     }
     return StepStatus::success;
@@ -544,6 +778,18 @@ void WeakNonlinearSolver::updateDiagnostics(StepStatus status) noexcept {
         diagnostics_.finite = diagnostics_.finite && std::isfinite(velocity);
         diagnostics_.maximumAbsVelY = std::max(diagnostics_.maximumAbsVelY, std::abs(velocity));
     }
+    diagnostics_.instantaneousBoundaryOutflowRate = instantaneousBoundaryOutflowRate_;
+    diagnostics_.cumulativeBoundaryOutwardVolume = state_.cumulativeBoundaryVolume_;
+    diagnostics_.netBoundaryOutflowRate = 0.0;
+    double cumulativeOutflow = 0.0;
+    for (std::size_t edge = 0; edge < boundaryEdgeCount; ++edge) {
+        diagnostics_.netBoundaryOutflowRate += instantaneousBoundaryOutflowRate_[edge];
+        cumulativeOutflow += state_.cumulativeBoundaryVolume_[edge];
+    }
+    diagnostics_.accountedExpectedVolume = state_.initialWaterVolume_ +
+        state_.accumulatedEditWaterVolume_ - cumulativeOutflow;
+    diagnostics_.accountingError = diagnostics_.totalVolume -
+        diagnostics_.accountedExpectedVolume;
 }
 
 void WeakNonlinearSolver::resizeScratch() {

@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <numbers>
 #include <span>
 #include <vector>
 
@@ -93,6 +94,18 @@ namespace {
     const double scale = std::max(volume(state), 1.0);
     const double operationCount = static_cast<double>(state.waterDepth().size());
     return 64.0 * std::numeric_limits<double>::epsilon() * operationCount * scale;
+}
+
+[[nodiscard]] bool restoreVelocities(SimulationState& state,
+                                     const std::span<const double> velX,
+                                     const std::span<const double> velY) {
+    const std::vector<double> bed(state.bedElevation().values().begin(),
+                                  state.bedElevation().values().end());
+    const std::vector<double> depth(state.waterDepth().values().begin(),
+                                    state.waterDepth().values().end());
+    return state.restoreCurrentState(bed, depth, velX, velY, state.time(),
+                                     state.cumulativeBoundaryVolume(),
+                                     state.accumulatedEditWaterVolume());
 }
 
 [[nodiscard]] std::uint64_t fingerprint(const std::span<const double> values) noexcept {
@@ -223,6 +236,221 @@ namespace {
         XCTAssertEqual(state.velY()(column, state.geometry().height), 0.0);
     }
     XCTAssertEqualWithAccuracy(volume(state), initialVolume, tolerance);
+    for (const double rate : solver.diagnostics().instantaneousBoundaryOutflowRate) {
+        XCTAssertEqual(rate, 0.0);
+    }
+    for (const double boundaryVolume : solver.diagnostics().cumulativeBoundaryOutwardVolume) {
+        XCTAssertEqual(boundaryVolume, 0.0);
+    }
+    XCTAssertEqualWithAccuracy(solver.diagnostics().accountingError, 0.0, tolerance);
+}
+
+- (void)testFreeOpenBoundaryCarriesSignedLimitedFluxAndAccountsVolume {
+    constexpr std::size_t width = 32;
+    constexpr std::size_t height = 16;
+    constexpr double speed = 0.25;
+    constexpr double timeStep = 0.01;
+    const auto run = [&](const double rightVelocity) {
+        SimulationState state = makeState(width, height);
+        BoundaryConfiguration boundaries;
+        boundaries.right.type = BoundaryType::freeOpen;
+        XCTAssertTrue(state.setBoundaryConfiguration(boundaries));
+
+        std::vector<double> velX((width + 1) * height, 0.0);
+        const std::vector<double> velY(width * (height + 1), 0.0);
+        for (std::size_t row = 0; row < height; ++row) {
+            velX[row * (width + 1) + width] = rightVelocity;
+        }
+        XCTAssertTrue(restoreVelocities(state, velX, velY));
+
+        SolverConfiguration configuration;
+        configuration.workerCount = 4;
+        configuration.linearDamping = 0.0;
+        configuration.minimumWetDepth = 0.0;
+        WeakNonlinearSolver solver(state, configuration);
+        const double initialVolume = volume(state);
+        XCTAssertEqual(solver.stepOnce(timeStep), StepStatus::success);
+
+        const double expectedOutwardVolume = timeStep * static_cast<double>(height) * speed;
+        const double signedExpected = std::copysign(expectedOutwardVolume, rightVelocity);
+        const Diagnostics& diagnostics = solver.diagnostics();
+        XCTAssertEqualWithAccuracy(
+            diagnostics.cumulativeBoundaryOutwardVolume[boundaryIndex(BoundaryEdge::right)],
+            signedExpected, conservationTolerance(state));
+        XCTAssertEqualWithAccuracy(volume(state), initialVolume - signedExpected,
+                                   conservationTolerance(state));
+        XCTAssertEqualWithAccuracy(diagnostics.accountedExpectedVolume, volume(state),
+                                   conservationTolerance(state));
+        XCTAssertEqualWithAccuracy(diagnostics.accountingError, 0.0,
+                                   conservationTolerance(state));
+        XCTAssertEqual(std::signbit(diagnostics.instantaneousBoundaryOutflowRate[
+                           boundaryIndex(BoundaryEdge::right)]),
+                       std::signbit(rightVelocity));
+        XCTAssertGreaterThanOrEqual(diagnostics.minimumDepth, 0.0);
+        XCTAssertTrue(diagnostics.finite);
+    };
+    run(speed);
+    run(-speed);
+}
+
+- (void)testDrivenHeightBoundaryUsesHydrostaticReservoirAndDrySegments {
+    constexpr double pi = std::numbers::pi;
+    const DrivenHeightBoundary forcing{
+        .meanSurfaceElevation = 1.0,
+        .amplitude = 0.2,
+        .periodSeconds = 4.0,
+        .phaseRadians = pi / 2.0,
+        .rampSeconds = 1.0,
+    };
+    XCTAssertEqualWithAccuracy(forcing.surfaceElevation(0.0), 1.0, 1.0e-15);
+    XCTAssertEqualWithAccuracy(forcing.surfaceElevation(0.5),
+                               1.0 + 0.1 * std::sin(3.0 * pi / 4.0), 1.0e-15);
+    XCTAssertEqualWithAccuracy(forcing.surfaceElevation(1.0), 1.0, 1.0e-15);
+    XCTAssertFalse(DrivenHeightBoundary{.periodSeconds = 0.0}.isValid());
+
+    const auto oneStepRate = [&](const double reservoirSurface) {
+        SimulationState state = makeState(32, 16);
+        BoundaryConfiguration boundaries;
+        boundaries.right = {
+            .type = BoundaryType::drivenHeight,
+            .driven = {
+                .meanSurfaceElevation = reservoirSurface,
+                .amplitude = 0.0,
+                .periodSeconds = 4.0,
+                .phaseRadians = 0.0,
+                .rampSeconds = 0.0,
+            },
+        };
+        XCTAssertTrue(state.setBoundaryConfiguration(boundaries));
+        SolverConfiguration configuration;
+        configuration.workerCount = 4;
+        configuration.linearDamping = 0.0;
+        configuration.minimumWetDepth = 0.0;
+        WeakNonlinearSolver solver(state, configuration);
+        XCTAssertEqual(solver.stepOnce(0.005), StepStatus::success);
+        XCTAssertEqualWithAccuracy(solver.diagnostics().accountingError, 0.0,
+                                   conservationTolerance(state));
+        return solver.diagnostics().instantaneousBoundaryOutflowRate[
+            boundaryIndex(BoundaryEdge::right)];
+    };
+    XCTAssertEqual(oneStepRate(1.0), 0.0);
+    XCTAssertLessThan(oneStepRate(1.2), 0.0);
+    XCTAssertGreaterThan(oneStepRate(0.8), 0.0);
+
+    constexpr std::size_t width = 32;
+    constexpr std::size_t height = 16;
+    const GridGeometry geometry{width, height, static_cast<double>(width),
+                                static_cast<double>(height)};
+    std::vector<double> bed(width * height, 0.0);
+    std::vector<double> depth(width * height, 1.0);
+    for (std::size_t row = height / 2; row < height; ++row) {
+        bed[row * width + width - 1] = 2.0;
+        depth[row * width + width - 1] = 0.0;
+    }
+    BoundaryConfiguration boundaries;
+    boundaries.right = {
+        .type = BoundaryType::drivenHeight,
+        .driven = {
+            .meanSurfaceElevation = 1.2,
+            .amplitude = 0.0,
+            .periodSeconds = 4.0,
+            .phaseRadians = 0.0,
+            .rampSeconds = 0.0,
+        },
+    };
+    SimulationState drySegments;
+    XCTAssertTrue(drySegments.initializeDepth(geometry, bed, depth, {}, boundaries));
+    SolverConfiguration configuration;
+    configuration.workerCount = 4;
+    configuration.linearDamping = 0.0;
+    configuration.minimumWetDepth = 0.0;
+    WeakNonlinearSolver solver(drySegments, configuration);
+    XCTAssertEqual(solver.stepOnce(0.005), StepStatus::success);
+    for (std::size_t row = height / 2; row < height; ++row) {
+        XCTAssertEqual(drySegments.velX()(width, row), 0.0);
+    }
+    XCTAssertLessThan(solver.diagnostics().instantaneousBoundaryOutflowRate[
+                          boundaryIndex(BoundaryEdge::right)], 0.0);
+    XCTAssertEqualWithAccuracy(solver.diagnostics().accountingError, 0.0,
+                               conservationTolerance(drySegments));
+}
+
+- (void)testRightDrivenWaveHasCausalPeriodAndBoundaryAccountedVolume {
+    constexpr std::size_t width = 128;
+    constexpr std::size_t height = 64;
+    constexpr double timeStep = 0.005;
+    constexpr std::size_t stepCount = 2'800;
+    const GridGeometry geometry{width, height, static_cast<double>(width),
+                                static_cast<double>(height)};
+    const std::vector<double> bed(width * height, 0.0);
+    const std::vector<double> depth(width * height, 1.0);
+    BoundaryConfiguration boundaries;
+    boundaries.right = {
+        .type = BoundaryType::drivenHeight,
+        .driven = {
+            .meanSurfaceElevation = 1.0,
+            .amplitude = 0.10,
+            .periodSeconds = 4.0,
+            .phaseRadians = 0.0,
+            .rampSeconds = 1.0,
+        },
+    };
+    SimulationState state;
+    XCTAssertTrue(state.initializeDepth(geometry, bed, depth, {}, boundaries));
+    SolverConfiguration configuration;
+    configuration.workerCount = 4;
+    configuration.linearDamping = 0.02;
+    configuration.minimumWetDepth = 1.0e-8;
+    WeakNonlinearSolver solver(state, configuration);
+
+    double nearArrival = std::numeric_limits<double>::infinity();
+    double farArrival = std::numeric_limits<double>::infinity();
+    bool observedInflow = false;
+    bool observedOutflow = false;
+    double previousDeviation = 0.0;
+    std::vector<double> upwardCrossingTimes;
+    upwardCrossingTimes.reserve(4);
+    for (std::size_t step = 0; step < stepCount; ++step) {
+        XCTAssertEqual(solver.stepOnce(timeStep), StepStatus::success);
+        const double time = state.time();
+        const double nearDeviation = state.waterDepth()(width - 4, height / 2) - 1.0;
+        const double farDeviation = state.waterDepth()(4, height / 2) - 1.0;
+        if (!std::isfinite(nearArrival) && std::abs(nearDeviation) > 1.0e-4) {
+            nearArrival = time;
+        }
+        if (!std::isfinite(farArrival) && std::abs(farDeviation) > 1.0e-4) {
+            farArrival = time;
+        }
+        if (time > 2.0 && previousDeviation <= 0.0 && nearDeviation > 0.0) {
+            upwardCrossingTimes.push_back(time);
+        }
+        previousDeviation = nearDeviation;
+        const double rightFlow = solver.diagnostics().instantaneousBoundaryOutflowRate[
+            boundaryIndex(BoundaryEdge::right)];
+        observedInflow = observedInflow || rightFlow < -1.0e-8;
+        observedOutflow = observedOutflow || rightFlow > 1.0e-8;
+        XCTAssertTrue(solver.diagnostics().finite);
+        XCTAssertGreaterThanOrEqual(solver.diagnostics().minimumDepth, 0.0);
+        XCTAssertLessThanOrEqual(std::abs(solver.diagnostics().accountingError),
+                                 4.0 * conservationTolerance(state));
+    }
+
+    XCTAssertTrue(std::isfinite(nearArrival));
+    XCTAssertLessThan(nearArrival, farArrival);
+    XCTAssertTrue(observedInflow);
+    XCTAssertTrue(observedOutflow);
+    XCTAssertGreaterThanOrEqual(upwardCrossingTimes.size(), 2UL);
+    const double measuredPeriod = upwardCrossingTimes.back() -
+        upwardCrossingTimes[upwardCrossingTimes.size() - 2];
+    XCTAssertEqualWithAccuracy(measuredPeriod, 4.0, 0.35);
+    double waveEnergy = 0.0;
+    for (const double value : state.waterDepth().values()) {
+        const double deviation = value - 1.0;
+        waveEnergy += deviation * deviation;
+    }
+    XCTAssertTrue(std::isfinite(waveEnergy));
+    XCTAssertGreaterThan(waveEnergy, 0.0);
+    XCTAssertLessThan(waveEnergy, 100.0);
 }
 
 - (void)testDampingCFLAndInvalidStepDetection {
@@ -788,6 +1016,67 @@ namespace {
     XCTAssertEqual(solver.diagnostics().correctionCount, 0UL);
     XCTAssertEqualWithAccuracy(volume(state), editedVolume,
                                conservationTolerance(state));
+}
+
+- (void)testSmallConcurrentEditedClosedDomainConservesAccountedVolume {
+    constexpr std::size_t size = 8;
+    constexpr std::size_t workerCount = 2;
+    constexpr std::size_t warmUpStepCount = 20;
+    constexpr std::size_t measuredStepCount = 400;
+    SimulationState state = makeState(size, size, 0.2);
+    SolverConfiguration configuration;
+    configuration.workerCount = workerCount;
+    configuration.minimumWetDepth = 1.0e-8;
+    configuration.linearDamping = 0.02;
+    WeakNonlinearSolver solver(state, configuration);
+    for (std::size_t step = 0; step < warmUpStepCount; ++step) {
+        XCTAssertEqual(solver.stepOnce(0.0005), StepStatus::success);
+    }
+
+    const double editTime = state.time();
+    double accountedVolume = volume(state);
+    TerrainEditor editor(state, configuration.minimumWetDepth);
+    constexpr Point2D regions[][4] = {
+        {{0.25, 0.25}, {3.75, 0.25}, {3.75, 3.75}, {0.25, 3.75}},
+        {{4.25, 0.25}, {7.75, 0.25}, {7.75, 3.75}, {4.25, 3.75}},
+        {{0.25, 4.25}, {3.75, 4.25}, {3.75, 7.75}, {0.25, 7.75}},
+        {{4.25, 4.25}, {7.75, 4.25}, {7.75, 7.75}, {4.25, 7.75}},
+    };
+    constexpr MaterialOperation operations[]{
+        MaterialOperation::addSand,
+        MaterialOperation::removeSand,
+        MaterialOperation::addWater,
+        MaterialOperation::removeWater,
+    };
+    for (std::size_t index = 0; index < std::size(operations); ++index) {
+        const TerrainEditResult result = editor.applyPolygon({
+            regions[index],
+            {operations[index], 0.05, EditTarget::pausedCurrentState},
+        });
+        XCTAssertEqual(result.status, TerrainEditStatus::success);
+        XCTAssertGreaterThan(result.changedCells, 0UL);
+        accountedVolume += result.waterVolumeDelta;
+        XCTAssertEqualWithAccuracy(volume(state), accountedVolume,
+                                   conservationTolerance(state));
+        XCTAssertEqual(state.time(), editTime);
+        solver.stateWasEdited();
+        XCTAssertTrue(solver.diagnostics().finite);
+    }
+
+    const double editedVolume = accountedVolume;
+    for (std::size_t step = 0; step < measuredStepCount; ++step) {
+        XCTAssertEqual(solver.stepOnce(0.0005), StepStatus::success);
+    }
+    XCTAssertEqualWithAccuracy(volume(state), editedVolume,
+                               conservationTolerance(state));
+    XCTAssertEqualWithAccuracy(solver.diagnostics().totalVolume, editedVolume,
+                               conservationTolerance(state));
+    XCTAssertTrue(solver.diagnostics().finite);
+    XCTAssertGreaterThanOrEqual(solver.diagnostics().minimumDepth, 0.0);
+    XCTAssertTrue(allFinite(state.bedElevation().values()));
+    XCTAssertTrue(allFinite(state.waterDepth().values()));
+    XCTAssertTrue(allFinite(state.velX().values()));
+    XCTAssertTrue(allFinite(state.velY().values()));
 }
 
 - (void)testTenThousandStepEditedClosedDomainConservesAccountedVolume {

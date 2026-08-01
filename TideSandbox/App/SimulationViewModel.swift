@@ -55,6 +55,24 @@ enum SaveStateSource: String, CaseIterable, Identifiable {
     }
 }
 
+enum BoundaryPosition: String, CaseIterable, Identifiable {
+    case left
+    case right
+    case bottom
+    case top
+
+    var id: Self { self }
+    var title: String { rawValue.capitalized }
+}
+
+enum DrivenBoundaryParameter {
+    case meanSurfaceElevation
+    case amplitude
+    case periodSeconds
+    case phaseRadians
+    case rampSeconds
+}
+
 private enum PendingDiscardAction {
     case loadPreset
     case loadScene(SceneDocument)
@@ -109,6 +127,7 @@ final class SimulationViewModel: ObservableObject {
     @Published var saveStateSource: SaveStateSource = .initialState
     @Published var minimumBedElevation = SceneWorldLimits.defaults.minimumBedElevation
     @Published var maximumSurfaceElevation = SceneWorldLimits.defaults.maximumSurfaceElevation
+    @Published var boundaryConfiguration = SceneBoundaryConfiguration.reflective
     @Published var showMapAnnotations = true
     @Published private(set) var polygonPoints: [CGPoint] = []
     @Published private(set) var brushPreviewPoint: CGPoint?
@@ -133,6 +152,7 @@ final class SimulationViewModel: ObservableObject {
         }
 #endif
         let seed = SimulationPreset.centerBump32.makeSeed()
+        boundaryConfiguration = seed.boundaries
         storedInitialBedElevation = seed.bedElevation
         storedInitialWaterDepth = seed.waterDepth
         decorativeMapConfiguration = DecorativeMapConfiguration.stableScene(
@@ -247,6 +267,7 @@ final class SimulationViewModel: ObservableObject {
                 minimumBedElevation: minimumBedElevation,
                 maximumSurfaceElevation: maximumSurfaceElevation
             ),
+            boundaries: boundaryConfiguration,
             resources: base?.manifest.resources ?? .standard,
             source: base?.manifest.source ?? .user,
             description: base?.manifest.description,
@@ -300,6 +321,7 @@ final class SimulationViewModel: ObservableObject {
         storedInitialWaterDepth = seed.waterDepth
         minimumBedElevation = seed.worldLimits.minimumBedElevation
         maximumSurfaceElevation = seed.worldLimits.maximumSurfaceElevation
+        boundaryConfiguration = seed.boundaries
         decorativeMapConfiguration = DecorativeMapConfiguration.stableScene(
             bedElevation: seed.bedElevation,
             waterDepth: seed.waterDepth,
@@ -321,6 +343,7 @@ final class SimulationViewModel: ObservableObject {
         workerCount = document.manifest.solver.workerCount
         minimumBedElevation = document.manifest.resolvedWorldLimits.minimumBedElevation
         maximumSurfaceElevation = document.manifest.resolvedWorldLimits.maximumSurfaceElevation
+        boundaryConfiguration = document.manifest.resolvedBoundaries
         displayMode = .decorativeComposite
         palette = displayMode.preferredPalette
         storedInitialBedElevation = document.bedElevation
@@ -337,7 +360,8 @@ final class SimulationViewModel: ObservableObject {
             domainHeight: document.manifest.domainHeight,
             bedElevation: document.bedElevation,
             waterDepth: document.initialWaterDepth,
-            worldLimits: document.manifest.resolvedWorldLimits
+            worldLimits: document.manifest.resolvedWorldLimits,
+            boundaries: document.manifest.resolvedBoundaries
         ))
         runtime.updateConfiguration(
             gravity: gravity,
@@ -347,6 +371,117 @@ final class SimulationViewModel: ObservableObject {
             workerCount: workerCount
         )
         isDirty = false
+    }
+
+    func updateBoundaryConfiguration(_ configuration: SceneBoundaryConfiguration) {
+        guard configuration.isValid(with: SceneWorldLimits(
+            minimumBedElevation: minimumBedElevation,
+            maximumSurfaceElevation: maximumSurfaceElevation
+        )) else { return }
+        pause()
+        boundaryConfiguration = configuration
+        isDirty = true
+        runtime.updateBoundaryConfiguration(configuration)
+    }
+
+    func boundarySide(at position: BoundaryPosition) -> SceneBoundarySide {
+        switch position {
+        case .left: boundaryConfiguration.left
+        case .right: boundaryConfiguration.right
+        case .bottom: boundaryConfiguration.bottom
+        case .top: boundaryConfiguration.top
+        }
+    }
+
+    func setBoundaryType(_ type: SceneBoundaryType, at position: BoundaryPosition) {
+        updateBoundarySide(position: position) { current in
+            switch type {
+            case .reflective:
+                return .reflective
+            case .freeOpen:
+                return .freeOpen
+            case .drivenHeight:
+                if current.type == .drivenHeight { return current }
+                let limits = SceneWorldLimits(
+                    minimumBedElevation: minimumBedElevation,
+                    maximumSurfaceElevation: maximumSurfaceElevation
+                )
+                let surfaceValues = zip(snapshot.surfaceElevation, snapshot.waterDepth)
+                    .filter { Double($0.1) > minimumWetDepth }
+                    .map { Double($0.0) }
+                let rawMean = surfaceValues.isEmpty ?
+                    0.5 * (limits.minimumBedElevation + limits.maximumSurfaceElevation) :
+                    surfaceValues.reduce(0, +) / Double(surfaceValues.count)
+                let mean = min(max(rawMean, limits.minimumBedElevation),
+                               limits.maximumSurfaceElevation)
+                let amplitude = min(0.1, mean - limits.minimumBedElevation,
+                                    limits.maximumSurfaceElevation - mean)
+                return .drivenHeight(
+                    meanSurfaceElevation: mean,
+                    amplitude: max(amplitude, 0),
+                    periodSeconds: 8,
+                    phaseRadians: 0,
+                    rampSeconds: 2
+                )
+            }
+        }
+    }
+
+    func setDrivenBoundaryParameter(
+        _ parameter: DrivenBoundaryParameter,
+        value: Double,
+        at position: BoundaryPosition
+    ) {
+        guard value.isFinite else { return }
+        updateBoundarySide(position: position) { current in
+            guard current.type == .drivenHeight else { return current }
+            var mean = current.meanSurfaceElevation ?? 0
+            var amplitude = current.amplitude ?? 0
+            var period = current.periodSeconds ?? 8
+            var phase = current.phaseRadians ?? 0
+            var ramp = current.rampSeconds ?? 0
+            switch parameter {
+            case .meanSurfaceElevation: mean = value
+            case .amplitude: amplitude = max(value, 0)
+            case .periodSeconds: period = max(value, 0.001)
+            case .phaseRadians: phase = value
+            case .rampSeconds: ramp = max(value, 0)
+            }
+            mean = min(max(mean, minimumBedElevation), maximumSurfaceElevation)
+            amplitude = min(amplitude, mean - minimumBedElevation,
+                            maximumSurfaceElevation - mean)
+            return .drivenHeight(
+                meanSurfaceElevation: mean,
+                amplitude: max(amplitude, 0),
+                periodSeconds: period,
+                phaseRadians: phase,
+                rampSeconds: ramp
+            )
+        }
+    }
+
+    private func updateBoundarySide(
+        position: BoundaryPosition,
+        transform: (SceneBoundarySide) -> SceneBoundarySide
+    ) {
+        let replacement = transform(boundarySide(at: position))
+        let updated: SceneBoundaryConfiguration = switch position {
+        case .left:
+            SceneBoundaryConfiguration(left: replacement, right: boundaryConfiguration.right,
+                                       bottom: boundaryConfiguration.bottom, top: boundaryConfiguration.top)
+        case .right:
+            SceneBoundaryConfiguration(left: boundaryConfiguration.left, right: replacement,
+                                       bottom: boundaryConfiguration.bottom, top: boundaryConfiguration.top)
+        case .bottom:
+            SceneBoundaryConfiguration(left: boundaryConfiguration.left,
+                                       right: boundaryConfiguration.right, bottom: replacement,
+                                       top: boundaryConfiguration.top)
+        case .top:
+            SceneBoundaryConfiguration(left: boundaryConfiguration.left,
+                                       right: boundaryConfiguration.right,
+                                       bottom: boundaryConfiguration.bottom, top: replacement)
+        }
+        updateBoundaryConfiguration(updated)
     }
 
     private func requestDiscardingChanges(_ action: PendingDiscardAction) {

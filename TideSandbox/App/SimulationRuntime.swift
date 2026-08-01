@@ -1,6 +1,35 @@
 import CoreGraphics
 import Foundation
 
+nonisolated extension SceneBoundarySide {
+    var bridgeConfiguration: WSBoundarySideConfiguration {
+        let bridgeType: WSBoundaryType = switch type {
+        case .reflective: .reflective
+        case .freeOpen: .freeOpen
+        case .drivenHeight: .drivenHeight
+        }
+        return WSBoundarySideConfiguration(
+            type: bridgeType,
+            meanSurfaceElevation: meanSurfaceElevation ?? 0,
+            amplitude: amplitude ?? 0,
+            periodSeconds: periodSeconds ?? 1,
+            phaseRadians: phaseRadians ?? 0,
+            rampSeconds: rampSeconds ?? 0
+        )
+    }
+}
+
+nonisolated extension SceneBoundaryConfiguration {
+    var bridgeConfiguration: WSBoundaryConfiguration {
+        WSBoundaryConfiguration(
+            left: left.bridgeConfiguration,
+            right: right.bridgeConfiguration,
+            bottom: bottom.bridgeConfiguration,
+            top: top.bridgeConfiguration
+        )
+    }
+}
+
 struct ActiveBrush: Sendable {
     let point: CGPoint
     let radius: Double
@@ -36,7 +65,8 @@ nonisolated final class SimulationRuntime: @unchecked Sendable {
             bedElevation: seed.bedData,
             waterDepth: seed.depthData,
             minimumBed: seed.worldLimits.minimumBedElevation,
-            maximumSurface: seed.worldLimits.maximumSurfaceElevation
+            maximumSurface: seed.worldLimits.maximumSurfaceElevation,
+            boundaries: seed.boundaries.bridgeConfiguration
         )
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: 1.0 / 60.0, leeway: .milliseconds(2))
@@ -86,7 +116,8 @@ nonisolated final class SimulationRuntime: @unchecked Sendable {
                 bedElevation: seed.bedData,
                 waterDepth: seed.depthData,
                 minimumBed: seed.worldLimits.minimumBedElevation,
-                maximumSurface: seed.worldLimits.maximumSurfaceElevation
+                maximumSurface: seed.worldLimits.maximumSurfaceElevation,
+                boundaries: seed.boundaries.bridgeConfiguration
             )
             lastTick = .now()
             publishSnapshot(initialStateChanged: true)
@@ -132,6 +163,17 @@ nonisolated final class SimulationRuntime: @unchecked Sendable {
                 minimumWetDepth: minimumWetDepth,
                 workerCount: UInt(workerCount)
             )
+            publishSnapshot()
+        }
+    }
+
+    func updateBoundaryConfiguration(_ configuration: SceneBoundaryConfiguration) {
+        queue.async { [weak self] in
+            guard let self, !isShutDown else { return }
+            engine.isRunning = false
+            activeBrush = nil
+            _ = engine.setBoundaryConfiguration(configuration.bridgeConfiguration)
+            lastTick = .now()
             publishSnapshot()
         }
     }

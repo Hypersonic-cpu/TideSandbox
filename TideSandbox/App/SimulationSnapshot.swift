@@ -13,6 +13,11 @@ struct EngineDiagnostics: Sendable, Equatable {
     let substepCount: Int
     let wetCellCount: Int
     let correctionCount: Int
+    let instantaneousBoundaryOutflowRate: [Double]
+    let cumulativeBoundaryOutwardVolume: [Double]
+    let netBoundaryOutflowRate: Double
+    let accountedExpectedVolume: Double
+    let accountingError: Double
     let isFinite: Bool
     let status: WSEngineStepStatus
 
@@ -29,6 +34,11 @@ struct EngineDiagnostics: Sendable, Equatable {
         substepCount: Int,
         wetCellCount: Int,
         correctionCount: Int,
+        instantaneousBoundaryOutflowRate: [Double] = [0, 0, 0, 0],
+        cumulativeBoundaryOutwardVolume: [Double] = [0, 0, 0, 0],
+        netBoundaryOutflowRate: Double = 0,
+        accountedExpectedVolume: Double = 0,
+        accountingError: Double = 0,
         isFinite: Bool,
         status: WSEngineStepStatus
     ) {
@@ -44,6 +54,11 @@ struct EngineDiagnostics: Sendable, Equatable {
         self.substepCount = substepCount
         self.wetCellCount = wetCellCount
         self.correctionCount = correctionCount
+        self.instantaneousBoundaryOutflowRate = instantaneousBoundaryOutflowRate
+        self.cumulativeBoundaryOutwardVolume = cumulativeBoundaryOutwardVolume
+        self.netBoundaryOutflowRate = netBoundaryOutflowRate
+        self.accountedExpectedVolume = accountedExpectedVolume
+        self.accountingError = accountingError
         self.isFinite = isFinite
         self.status = status
     }
@@ -61,6 +76,11 @@ struct EngineDiagnostics: Sendable, Equatable {
         substepCount = Int(source.substepCount)
         wetCellCount = Int(source.wetCellCount)
         correctionCount = Int(source.correctionCount)
+        instantaneousBoundaryOutflowRate = source.instantaneousBoundaryOutflowRate.map(\.doubleValue)
+        cumulativeBoundaryOutwardVolume = source.cumulativeBoundaryOutwardVolume.map(\.doubleValue)
+        netBoundaryOutflowRate = source.netBoundaryOutflowRate
+        accountedExpectedVolume = source.accountedExpectedVolume
+        accountingError = source.accountingError
         isFinite = source.isFinite
         status = source.status
     }

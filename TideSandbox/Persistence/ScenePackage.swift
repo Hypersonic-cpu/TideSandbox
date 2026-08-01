@@ -51,6 +51,91 @@ nonisolated struct SceneWorldLimits: Codable, Equatable, Sendable {
     }
 }
 
+nonisolated enum SceneBoundaryType: String, Codable, CaseIterable, Sendable {
+    case reflective
+    case freeOpen
+    case drivenHeight
+}
+
+nonisolated struct SceneBoundarySide: Codable, Equatable, Sendable {
+    let type: SceneBoundaryType
+    let meanSurfaceElevation: Double?
+    let amplitude: Double?
+    let periodSeconds: Double?
+    let phaseRadians: Double?
+    let rampSeconds: Double?
+
+    static let reflective = SceneBoundarySide(type: .reflective)
+    static let freeOpen = SceneBoundarySide(type: .freeOpen)
+
+    static func drivenHeight(
+        meanSurfaceElevation: Double,
+        amplitude: Double,
+        periodSeconds: Double,
+        phaseRadians: Double,
+        rampSeconds: Double
+    ) -> SceneBoundarySide {
+        SceneBoundarySide(
+            type: .drivenHeight,
+            meanSurfaceElevation: meanSurfaceElevation,
+            amplitude: amplitude,
+            periodSeconds: periodSeconds,
+            phaseRadians: phaseRadians,
+            rampSeconds: rampSeconds
+        )
+    }
+
+    init(
+        type: SceneBoundaryType,
+        meanSurfaceElevation: Double? = nil,
+        amplitude: Double? = nil,
+        periodSeconds: Double? = nil,
+        phaseRadians: Double? = nil,
+        rampSeconds: Double? = nil
+    ) {
+        self.type = type
+        self.meanSurfaceElevation = meanSurfaceElevation
+        self.amplitude = amplitude
+        self.periodSeconds = periodSeconds
+        self.phaseRadians = phaseRadians
+        self.rampSeconds = rampSeconds
+    }
+
+    func isValid(with limits: SceneWorldLimits) -> Bool {
+        switch type {
+        case .reflective, .freeOpen:
+            return true
+        case .drivenHeight:
+            guard let meanSurfaceElevation, let amplitude, let periodSeconds,
+                  let phaseRadians, let rampSeconds else { return false }
+            return meanSurfaceElevation.isFinite && amplitude.isFinite && amplitude >= 0 &&
+                periodSeconds.isFinite && periodSeconds > 0 && phaseRadians.isFinite &&
+                rampSeconds.isFinite && rampSeconds >= 0 &&
+                meanSurfaceElevation - amplitude >= limits.minimumBedElevation &&
+                meanSurfaceElevation + amplitude <= limits.maximumSurfaceElevation
+        }
+    }
+}
+
+nonisolated struct SceneBoundaryConfiguration: Codable, Equatable, Sendable {
+    let left: SceneBoundarySide
+    let right: SceneBoundarySide
+    let bottom: SceneBoundarySide
+    let top: SceneBoundarySide
+
+    static let reflective = SceneBoundaryConfiguration(
+        left: .reflective,
+        right: .reflective,
+        bottom: .reflective,
+        top: .reflective
+    )
+
+    func isValid(with limits: SceneWorldLimits) -> Bool {
+        left.isValid(with: limits) && right.isValid(with: limits) &&
+            bottom.isValid(with: limits) && top.isValid(with: limits)
+    }
+}
+
 nonisolated struct SceneResourceNames: Codable, Equatable, Sendable {
     let bedElevation: String
     let initialWaterDepth: String
@@ -87,6 +172,7 @@ nonisolated struct SceneManifest: Codable, Equatable, Identifiable, Sendable {
     let initializationMode: SceneInitializationMode
     let solver: SceneSolverParameters
     let worldLimits: SceneWorldLimits?
+    let boundaries: SceneBoundaryConfiguration?
     let resources: SceneResourceNames
     let source: SceneSourceType
     let description: String?
@@ -108,6 +194,7 @@ nonisolated struct SceneManifest: Codable, Equatable, Identifiable, Sendable {
         initializationMode: SceneInitializationMode = .explicitDepth,
         solver: SceneSolverParameters = .defaults,
         worldLimits: SceneWorldLimits = .defaults,
+        boundaries: SceneBoundaryConfiguration? = nil,
         resources: SceneResourceNames = .standard,
         source: SceneSourceType,
         description: String? = nil,
@@ -128,6 +215,7 @@ nonisolated struct SceneManifest: Codable, Equatable, Identifiable, Sendable {
         self.initializationMode = initializationMode
         self.solver = solver
         self.worldLimits = worldLimits
+        self.boundaries = boundaries
         self.resources = resources
         self.source = source
         self.description = description
@@ -144,6 +232,7 @@ nonisolated struct SceneManifest: Codable, Equatable, Identifiable, Sendable {
     }
 
     var resolvedWorldLimits: SceneWorldLimits { worldLimits ?? .defaults }
+    var resolvedBoundaries: SceneBoundaryConfiguration { boundaries ?? .reflective }
 }
 
 nonisolated struct SceneDocument: Sendable {
@@ -457,6 +546,9 @@ nonisolated enum ScenePackageCodec {
         guard manifest.solver.isValid else { throw ScenePackageError.invalidSolverParameters }
         guard manifest.resolvedWorldLimits.isValid else {
             throw ScenePackageError.invalidManifest("world limits are invalid")
+        }
+        guard manifest.resolvedBoundaries.isValid(with: manifest.resolvedWorldLimits) else {
+            throw ScenePackageError.invalidManifest("boundary configuration is invalid")
         }
         guard manifest.storedByteOrder == SceneManifest.byteOrder,
               manifest.storedScalarType == SceneManifest.scalarType,

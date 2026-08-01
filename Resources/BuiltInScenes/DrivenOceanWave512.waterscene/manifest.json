@@ -7,22 +7,27 @@
       "type" : "reflective"
     },
     "right" : {
-      "type" : "reflective"
+      "amplitude" : 0.25,
+      "meanSurfaceElevation" : 1.2,
+      "periodSeconds" : 8,
+      "phaseRadians" : 0,
+      "rampSeconds" : 2,
+      "type" : "drivenHeight"
     },
     "top" : {
       "type" : "reflective"
     }
   },
   "createdAt" : "2026-07-31T15:00:00Z",
-  "description" : "A tidal-bore/tsunami-like initial surface-step stress visualization over exposed coastal terrain.",
+  "description" : "A continuously driven right-boundary ocean-wave stress visualization over exposed coastal terrain.",
   "domainHeight" : 512,
   "domainWidth" : 512,
   "gridHeight" : 512,
   "gridWidth" : 512,
-  "id" : "10000000-0000-4000-8000-000000000512",
+  "id" : "10000000-0000-4000-8000-000000000513",
   "initializationMode" : "explicitDepth",
   "modifiedAt" : "2026-07-31T15:00:00Z",
-  "name" : "512 × 512 Coast Channel",
+  "name" : "512 × 512 Driven Ocean Wave",
   "resources" : {
     "bedElevation" : "bed_elevation.bin",
     "initialWaterDepth" : "initial_water_depth.bin",
@@ -43,8 +48,8 @@
   "tags" : [
     "built-in",
     "coast",
-    "channel",
-    "initial-step",
+    "driven-boundary",
+    "wave",
     "large"
   ],
   "worldLimits" : {

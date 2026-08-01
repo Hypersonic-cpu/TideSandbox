@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Boundary.hh"
+
 #include <cstddef>
 
 namespace tide::swe {
@@ -23,6 +25,11 @@ struct Diagnostics final {
     double selectedTimeStep = 0.0;
     double simulatedTime = 0.0;
     double correctionVolume = 0.0;
+    BoundaryValues instantaneousBoundaryOutflowRate{};
+    BoundaryValues cumulativeBoundaryOutwardVolume{};
+    double netBoundaryOutflowRate = 0.0;
+    double accountedExpectedVolume = 0.0;
+    double accountingError = 0.0;
     std::size_t substepCount = 0;
     std::size_t wetCellCount = 0;
     std::size_t correctionCount = 0;

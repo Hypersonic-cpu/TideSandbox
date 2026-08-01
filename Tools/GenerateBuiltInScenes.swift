@@ -43,8 +43,15 @@ struct GenerateBuiltInScenes {
                 preset: .coastChannel512,
                 id: UUID(uuidString: "10000000-0000-4000-8000-000000000512")!,
                 filename: "CoastChannel512.waterscene",
-                description: "A high-resolution sloping coast cut by a submerged channel.",
-                tags: ["built-in", "coast", "channel", "large"]
+                description: "A tidal-bore/tsunami-like initial surface-step stress visualization over exposed coastal terrain.",
+                tags: ["built-in", "coast", "channel", "initial-step", "large"]
+            ),
+            Specification(
+                preset: .drivenOceanWave512,
+                id: UUID(uuidString: "10000000-0000-4000-8000-000000000513")!,
+                filename: "DrivenOceanWave512.waterscene",
+                description: "A continuously driven right-boundary ocean-wave stress visualization over exposed coastal terrain.",
+                tags: ["built-in", "coast", "driven-boundary", "wave", "large"]
             ),
         ]
 
@@ -66,6 +73,8 @@ struct GenerateBuiltInScenes {
                 domainHeight: seed.domainHeight,
                 initializationMode: .explicitDepth,
                 solver: .defaults,
+                worldLimits: seed.worldLimits,
+                boundaries: seed.boundaries,
                 source: .builtIn,
                 description: specification.description,
                 tags: specification.tags

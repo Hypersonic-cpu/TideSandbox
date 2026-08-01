@@ -335,6 +335,7 @@ TerrainEditResult TerrainEditor::applyWeighted(const MaterialEdit& edit) noexcep
     }
     state_.bedElevation_.swapValues(candidateBed_);
     state_.waterDepth_.swapValues(candidateDepth_);
+    state_.accumulatedEditWaterVolume_ += result.waterVolumeDelta;
     return result;
 }
 

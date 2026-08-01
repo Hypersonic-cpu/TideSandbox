@@ -1,4 +1,18 @@
 {
+  "boundaries" : {
+    "bottom" : {
+      "type" : "reflective"
+    },
+    "left" : {
+      "type" : "reflective"
+    },
+    "right" : {
+      "type" : "reflective"
+    },
+    "top" : {
+      "type" : "reflective"
+    }
+  },
   "createdAt" : "2026-07-31T15:00:00Z",
   "description" : "A still level lake over a flat bed for small-grid inspection.",
   "domainHeight" : 16,
@@ -26,13 +40,13 @@
   "storedByteOrder" : "little-endian",
   "storedRowOrder" : "row-major-bottom-to-top",
   "storedScalarType" : "float32",
-  "worldLimits" : {
-    "maximumSurfaceElevation" : 1000,
-    "minimumBedElevation" : -1000
-  },
   "tags" : [
     "built-in",
     "flat",
     "debug"
-  ]
+  ],
+  "worldLimits" : {
+    "maximumSurfaceElevation" : 1000,
+    "minimumBedElevation" : -1000
+  }
 }

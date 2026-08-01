@@ -59,6 +59,7 @@ public:
 
     // A worker-count change requires constructing a new solver so its persistent pool is explicit.
     [[nodiscard]] bool setConfiguration(SolverConfiguration configuration) noexcept;
+    [[nodiscard]] bool setBoundaryConfiguration(BoundaryConfiguration configuration) noexcept;
     [[nodiscard]] double stableTimeStep() noexcept;
     [[nodiscard]] StepStatus stepOnce(double timeStep) noexcept;
     [[nodiscard]] StepStatus advance(double frameDeltaTime) noexcept;
@@ -89,6 +90,7 @@ private:
     CellField outgoingScale_;
     FaceField fluxX_;
     FaceField fluxY_;
+    BoundaryValues instantaneousBoundaryOutflowRate_{};
     Diagnostics diagnostics_;
     SolverPerformanceCounters performanceCounters_;
 };

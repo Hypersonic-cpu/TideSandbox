@@ -140,6 +140,7 @@ private struct InspectorView: View {
                 sceneSection
                 displaySection
                 simulationSection
+                boundariesSection
                 terrainSection
                 diagnosticsSection
             }
@@ -341,6 +342,81 @@ private struct InspectorView: View {
         }
     }
 
+    private var boundariesSection: some View {
+        InspectorSection(title: "Boundaries", systemImage: "rectangle.split.3x3") {
+            ForEach(BoundaryPosition.allCases) { position in
+                let side = model.boundarySide(at: position)
+                VStack(alignment: .leading, spacing: 6) {
+                    Picker(position.title, selection: Binding(
+                        get: { model.boundarySide(at: position).type },
+                        set: { model.setBoundaryType($0, at: position) }
+                    )) {
+                        Text("Reflective").tag(SceneBoundaryType.reflective)
+                        Text("Free/Open").tag(SceneBoundaryType.freeOpen)
+                        Text("Driven Height").tag(SceneBoundaryType.drivenHeight)
+                    }
+                    .accessibilityIdentifier("boundary-\(position.rawValue)-type")
+                    if side.type == .drivenHeight {
+                        Grid(alignment: .leading, horizontalSpacing: 8,
+                             verticalSpacing: 4) {
+                            boundaryValueRow("Mean surface", position: position,
+                                             parameter: .meanSurfaceElevation, unit: "m")
+                            boundaryValueRow("Amplitude", position: position,
+                                             parameter: .amplitude, unit: "m")
+                            boundaryValueRow("Period", position: position,
+                                             parameter: .periodSeconds, unit: "s")
+                            boundaryValueRow("Phase", position: position,
+                                             parameter: .phaseRadians, unit: "rad")
+                            boundaryValueRow("Ramp", position: position,
+                                             parameter: .rampSeconds, unit: "s")
+                        }
+                        .font(.caption)
+                        .padding(.leading, 8)
+                    }
+                }
+            }
+            Text("Positive flow is outward. Boundary changes pause and apply atomically.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func boundaryValueRow(
+        _ label: String,
+        position: BoundaryPosition,
+        parameter: DrivenBoundaryParameter,
+        unit: String
+    ) -> some View {
+        GridRow {
+            Text(label).foregroundStyle(.secondary)
+            TextField(label, value: Binding(
+                get: { boundaryValue(parameter, at: position) },
+                set: { model.setDrivenBoundaryParameter(parameter, value: $0, at: position) }
+            ), format: .number.precision(.fractionLength(0...3)))
+                .multilineTextAlignment(.trailing)
+                .frame(width: 72)
+                .accessibilityIdentifier(
+                    "boundary-\(position.rawValue)-\(String(describing: parameter))"
+                )
+            Text(unit).foregroundStyle(.secondary)
+        }
+    }
+
+    private func boundaryValue(
+        _ parameter: DrivenBoundaryParameter,
+        at position: BoundaryPosition
+    ) -> Double {
+        let side = model.boundarySide(at: position)
+        return switch parameter {
+        case .meanSurfaceElevation: side.meanSurfaceElevation ?? 0
+        case .amplitude: side.amplitude ?? 0
+        case .periodSeconds: side.periodSeconds ?? 8
+        case .phaseRadians: side.phaseRadians ?? 0
+        case .rampSeconds: side.rampSeconds ?? 0
+        }
+    }
+
     @ViewBuilder
     private var terrainSection: some View {
         InspectorSection(title: "Terrain", systemImage: "mountain.2") {
@@ -418,6 +494,22 @@ private struct InspectorView: View {
             DiagnosticRow(label: "Wet cells", value: "\(diagnostics.wetCellCount)")
                 .accessibilityIdentifier("wet-cells-diagnostic")
             DiagnosticRow(label: "Substeps", value: "\(diagnostics.substepCount)")
+            DiagnosticRow(label: "Net boundary flow", value: String(
+                format: "%+.4g m³/s", diagnostics.netBoundaryOutflowRate
+            ))
+            if diagnostics.instantaneousBoundaryOutflowRate.count == 4 {
+                DiagnosticRow(label: "Left / right", value: String(
+                    format: "%+.3g / %+.3g", diagnostics.instantaneousBoundaryOutflowRate[0],
+                    diagnostics.instantaneousBoundaryOutflowRate[1]
+                ))
+                DiagnosticRow(label: "Bottom / top", value: String(
+                    format: "%+.3g / %+.3g", diagnostics.instantaneousBoundaryOutflowRate[2],
+                    diagnostics.instantaneousBoundaryOutflowRate[3]
+                ))
+            }
+            DiagnosticRow(label: "Accounted error", value: String(
+                format: "%+.3g m³", diagnostics.accountingError
+            ))
             if !diagnostics.isFinite {
                 Label("Non-finite numerical state", systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.red)
