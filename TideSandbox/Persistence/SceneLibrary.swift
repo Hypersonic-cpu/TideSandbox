@@ -20,7 +20,7 @@ final class SceneLibrary: ObservableObject {
                 self.repository = try Self.makeDefaultRepository()
             } catch {
                 let fallback = FileManager.default.temporaryDirectory.appendingPathComponent(
-                    "WaterSandbox-Recovery",
+                    "TideSandbox-Recovery",
                     isDirectory: true
                 )
                 self.repository = SceneRepository(
@@ -41,10 +41,10 @@ final class SceneLibrary: ObservableObject {
             appropriateFor: nil,
             create: true
         )
-        var root = support.appendingPathComponent("WaterSandbox", isDirectory: true)
+        var root = support.appendingPathComponent("TideSandbox", isDirectory: true)
 #if DEBUG
         let environment = ProcessInfo.processInfo.environment
-        if let namespace = environment["WATER_SANDBOX_STORAGE_NAMESPACE"],
+        if let namespace = environment["TIDESANDBOX_STORAGE_NAMESPACE"],
            !namespace.isEmpty,
            namespace.count <= 64,
            namespace.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" }) {

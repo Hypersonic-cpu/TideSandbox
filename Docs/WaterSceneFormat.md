@@ -49,7 +49,7 @@ readable errors.
 User and imported packages are stored under:
 
 ```text
-~/Library/Application Support/WaterSandbox/Scenes/<uuid>.waterscene/
+~/Library/Application Support/TideSandbox/Scenes/<uuid>.waterscene/
 ```
 
 Each package is authoritative. `catalog.json` contains only rebuildable gallery

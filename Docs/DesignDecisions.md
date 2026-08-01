@@ -1,4 +1,4 @@
-# WaterSandbox Design Decisions
+# TideSandbox Design Decisions
 
 ## DD-001 — Weakly nonlinear reference model
 

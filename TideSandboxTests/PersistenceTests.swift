@@ -441,7 +441,7 @@ final class PersistenceTests: XCTestCase {
 
     private func temporaryDirectory() -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "WaterSandboxTests-\(UUID().uuidString)",
+            "TideSandboxTests-\(UUID().uuidString)",
             isDirectory: true
         )
         temporaryURLs.append(url)

@@ -5,19 +5,19 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Water Sandbox</string>
+	<string>TideSandbox</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
 			<key>CFBundleTypeName</key>
-			<string>Water Scene</string>
+			<string>TideSandbox Scene</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>LSHandlerRank</key>
 			<string>Owner</string>
 			<key>LSItemContentTypes</key>
 			<array>
-				<string>com.potassium.watersandbox.scene</string>
+				<string>com.potassium.tidesandbox.scene</string>
 			</array>
 			<key>LSTypeIsPackage</key>
 			<true/>
@@ -30,7 +30,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Water Sandbox</string>
+	<string>TideSandbox</string>
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
@@ -47,9 +47,9 @@
 				<string>com.apple.package</string>
 			</array>
 			<key>UTTypeDescription</key>
-			<string>Water Sandbox Scene</string>
+			<string>TideSandbox Scene</string>
 			<key>UTTypeIdentifier</key>
-			<string>com.potassium.watersandbox.scene</string>
+			<string>com.potassium.tidesandbox.scene</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>

@@ -1,4 +1,4 @@
-# WaterSandbox Benchmark Log
+# TideSandbox Benchmark Log
 
 ## 2026-08-01 — Phase 5 CPU baseline and measured optimization
 
@@ -9,7 +9,7 @@ Measurements ran on an Apple M4 MacBook Air with 10 CPU cores (4 performance,
 Apple Clang 21.0.0, and Apple Swift 6.3.3. The benchmark fixes the parallel case
 at four workers so runs remain comparable.
 
-`Tools/BenchmarkWaterSandbox.mm` uses a finite, uneven-bed perturbed lake. Each
+`Tools/BenchmarkTideSandbox.mm` uses a finite, uneven-bed perturbed lake. Each
 reported solver and snapshot value is the median of five batches; the batch
 sizes are 400, 250, 40, and 8 iterations for 16², 32², 128², and 512².
 `Tools/BenchmarkRenderer.swift` likewise reports five-batch medians. Times below
@@ -116,7 +116,7 @@ bridge round trips passed after the change.
 clang++ -std=c++20 -O3 -DNDEBUG -fobjc-arc \
   -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror \
   -I TideSandbox/Engine -I TideSandbox/Bridge \
-  Tools/BenchmarkWaterSandbox.mm TideSandbox/Bridge/WaterEngineBridge.mm \
+  Tools/BenchmarkTideSandbox.mm TideSandbox/Bridge/WaterEngineBridge.mm \
   TideSandbox/Engine/*.cc -framework Foundation -o /tmp/tide_benchmark
 /tmp/tide_benchmark
 

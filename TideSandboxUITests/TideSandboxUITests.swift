@@ -26,7 +26,7 @@ final class TideSandboxUITests: XCTestCase {
         reset.click()
 
         let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
-        screenshot.name = "Water Sandbox Main Window"
+        screenshot.name = "TideSandbox Main Window"
         screenshot.lifetime = .deleteOnSuccess
         add(screenshot)
     }
@@ -68,7 +68,7 @@ final class TideSandboxUITests: XCTestCase {
         }
 
         let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
-        screenshot.name = "Water Sandbox 512 Grid"
+        screenshot.name = "TideSandbox 512 Grid"
         screenshot.lifetime = .deleteOnSuccess
         add(screenshot)
     }
@@ -96,7 +96,7 @@ final class TideSandboxUITests: XCTestCase {
         picker.click()
         app.menuItems["Bilinear scalar"].click()
         let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
-        screenshot.name = "Water Sandbox Bilinear Display Policy"
+        screenshot.name = "TideSandbox Bilinear Display Policy"
         screenshot.lifetime = .deleteOnSuccess
         add(screenshot)
     }
@@ -520,7 +520,7 @@ final class TideSandboxUITests: XCTestCase {
     @MainActor
     func testSavedSceneSurvivesRelaunchInGallery() throws {
         let app = XCUIApplication()
-        app.launchEnvironment["WATER_SANDBOX_STORAGE_NAMESPACE"] = "PersistenceRelaunch"
+        app.launchEnvironment["TIDESANDBOX_STORAGE_NAMESPACE"] = "PersistenceRelaunch"
         app.launchArguments = ["--reset-scene-storage"]
         app.launch()
 
@@ -556,7 +556,7 @@ final class TideSandboxUITests: XCTestCase {
         XCTAssertTrue(waitForGalleryCount("5", in: app))
 
         let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
-        screenshot.name = "Water Sandbox Persistent Gallery"
+        screenshot.name = "TideSandbox Persistent Gallery"
         screenshot.lifetime = .deleteOnSuccess
         add(screenshot)
     }
@@ -564,7 +564,7 @@ final class TideSandboxUITests: XCTestCase {
     @MainActor
     func testUnsavedChangesRequireConfirmationBeforeSceneReplacement() throws {
         let app = XCUIApplication()
-        app.launchEnvironment["WATER_SANDBOX_STORAGE_NAMESPACE"] = "DirtyWarning"
+        app.launchEnvironment["TIDESANDBOX_STORAGE_NAMESPACE"] = "DirtyWarning"
         app.launchArguments = ["--reset-scene-storage"]
         app.launch()
 

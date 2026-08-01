@@ -11,7 +11,7 @@ struct ActiveBrush: Sendable {
 }
 
 nonisolated final class SimulationRuntime: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "WaterSandbox.EngineRuntime", qos: .userInteractive)
+    private let queue = DispatchQueue(label: "TideSandbox.EngineRuntime", qos: .userInteractive)
     private let engine: WSWaterEngineBridge
     private var snapshotHandler: (@Sendable (SimulationSnapshot, Bool) -> Void)?
     private var timer: DispatchSourceTimer?

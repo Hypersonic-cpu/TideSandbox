@@ -1,4 +1,4 @@
-# WaterSandbox 2D MVP — Implementation Plan
+# TideSandbox 2D MVP — Implementation Plan
 
 > **Status:** Active  
 > **Target:** macOS desktop application (Do not design iOS version so far)
@@ -137,9 +137,9 @@ Dependency rules:
 ## 4. Suggested source layout
 
 ```text
-WaterSandbox/
+TideSandbox/
 ├── App/
-│   ├── WaterSandboxApp.swift
+│   ├── TideSandboxApp.swift
 │   ├── MainWindowView.swift
 │   ├── SimulationViewModel.swift
 │   ├── MosaicGridView.swift
@@ -647,7 +647,7 @@ Include all four grid scales and at least one coast/bay scene.
 Target:
 
 ```text
-~/Library/Application Support/WaterSandbox/Scenes/
+~/Library/Application Support/TideSandbox/Scenes/
 ```
 
 Use UUID directories and handle missing/corrupt files cleanly.

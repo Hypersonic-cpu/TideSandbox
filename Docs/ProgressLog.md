@@ -1,4 +1,4 @@
-# WaterSandbox Progress Log
+# TideSandbox Progress Log
 
 ## 2026-07-31 — Phase 1 complete
 

@@ -79,7 +79,7 @@ struct SceneGalleryView: View {
         .frame(minWidth: 760, minHeight: 560)
         .fileImporter(
             isPresented: $importing,
-            allowedContentTypes: [.waterScene],
+            allowedContentTypes: [.tideSandboxScene],
             allowsMultipleSelection: false
         ) { result in
             guard case let .success(urls) = result, let url = urls.first else {

@@ -67,7 +67,7 @@ actor SceneRepository {
             create: true
         )
         return SceneRepository(
-            rootURL: support.appendingPathComponent("WaterSandbox", isDirectory: true),
+            rootURL: support.appendingPathComponent("TideSandbox", isDirectory: true),
             builtInPackageURLs: builtInPackageURLs,
             fileManager: fileManager
         )
