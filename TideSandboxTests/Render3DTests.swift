@@ -489,9 +489,13 @@ final class Render3DTests: XCTestCase {
             generation: 3
         ))
         XCTAssertEqual(renderer.topologyRebuildCount, 2)
+        #if DEBUG
         XCTAssertEqual(ViewportRenderActivity.counters.metalSnapshotUpdates, 3)
         XCTAssertEqual(ViewportRenderActivity.counters.mosaicRasterizations, 0)
         XCTAssertEqual(ViewportRenderActivity.counters.scalarResamples, 0)
+        #else
+        XCTAssertEqual(ViewportRenderActivity.counters, .init())
+        #endif
     }
 
     func testEditToolPausesImmediatelyAndPolygonSurvivesViewportSwitches() {

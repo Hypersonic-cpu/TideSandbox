@@ -790,4 +790,62 @@ namespace {
                                conservationTolerance(state));
 }
 
+- (void)testTenThousandStepEditedClosedDomainConservesAccountedVolume {
+    constexpr std::size_t size = 32;
+    SimulationState state = makeState(size, size, 0.2);
+    SolverConfiguration configuration;
+    configuration.workerCount = 4;
+    configuration.minimumWetDepth = 1.0e-8;
+    configuration.linearDamping = 0.02;
+    WeakNonlinearSolver solver(state, configuration);
+    for (std::size_t step = 0; step < 100; ++step) {
+        XCTAssertEqual(solver.stepOnce(0.0005), StepStatus::success);
+    }
+
+    const double editTime = state.time();
+    double accountedVolume = volume(state);
+    TerrainEditor editor(state, configuration.minimumWetDepth);
+    constexpr Point2D regions[][4] = {
+        {{3.0, 3.0}, {13.0, 3.0}, {13.0, 13.0}, {3.0, 13.0}},
+        {{19.0, 3.0}, {29.0, 3.0}, {29.0, 13.0}, {19.0, 13.0}},
+        {{3.0, 19.0}, {13.0, 19.0}, {13.0, 29.0}, {3.0, 29.0}},
+        {{19.0, 19.0}, {29.0, 19.0}, {29.0, 29.0}, {19.0, 29.0}},
+    };
+    constexpr MaterialOperation operations[]{
+        MaterialOperation::addSand,
+        MaterialOperation::removeSand,
+        MaterialOperation::addWater,
+        MaterialOperation::removeWater,
+    };
+    for (std::size_t index = 0; index < std::size(operations); ++index) {
+        const TerrainEditResult result = editor.applyPolygon({
+            regions[index],
+            {operations[index], 0.05, EditTarget::pausedCurrentState},
+        });
+        XCTAssertEqual(result.status, TerrainEditStatus::success);
+        XCTAssertGreaterThan(result.changedCells, 0UL);
+        accountedVolume += result.waterVolumeDelta;
+        XCTAssertEqualWithAccuracy(volume(state), accountedVolume,
+                                   conservationTolerance(state));
+        XCTAssertEqual(state.time(), editTime);
+        solver.stateWasEdited();
+        XCTAssertTrue(solver.diagnostics().finite);
+    }
+
+    const double editedVolume = accountedVolume;
+    for (std::size_t step = 0; step < 10'000; ++step) {
+        XCTAssertEqual(solver.stepOnce(0.0005), StepStatus::success);
+    }
+    XCTAssertEqualWithAccuracy(volume(state), editedVolume,
+                               conservationTolerance(state));
+    XCTAssertEqualWithAccuracy(solver.diagnostics().totalVolume, editedVolume,
+                               conservationTolerance(state));
+    XCTAssertTrue(solver.diagnostics().finite);
+    XCTAssertGreaterThanOrEqual(solver.diagnostics().minimumDepth, 0.0);
+    XCTAssertTrue(allFinite(state.bedElevation().values()));
+    XCTAssertTrue(allFinite(state.waterDepth().values()));
+    XCTAssertTrue(allFinite(state.velX().values()));
+    XCTAssertTrue(allFinite(state.velY().values()));
+}
+
 @end

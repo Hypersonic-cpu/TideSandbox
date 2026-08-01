@@ -466,10 +466,14 @@ final class DisplayTests: XCTestCase {
             mode: .decorativeComposite,
             palette: .blueWhite
         ))
+        #if DEBUG
         XCTAssertEqual(ViewportRenderActivity.counters.mosaicRasterizations, 1)
         XCTAssertGreaterThanOrEqual(ViewportRenderActivity.counters.scalarResamples, 2)
         XCTAssertEqual(ViewportRenderActivity.counters.metalSnapshotUpdates, 0)
         XCTAssertEqual(ViewportRenderActivity.counters.metalDraws, 0)
+        #else
+        XCTAssertEqual(ViewportRenderActivity.counters, .init())
+        #endif
     }
 
     func testResolutionPoliciesMatchAnalyticalSamplingDefinitions() throws {
