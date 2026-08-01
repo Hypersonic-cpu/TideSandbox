@@ -300,9 +300,11 @@ private struct InspectorView: View {
                         Text(mode.title).tag(mode)
                     }
                 }
-                Picker("Colors", selection: $model.palette) {
-                    ForEach(ColorPalette.allCases) { palette in
-                        Text(palette.title).tag(palette)
+                if model.displayMode != .decorativeComposite {
+                    Picker("Colors", selection: $model.palette) {
+                        ForEach(ColorPalette.allCases) { palette in
+                            Text(palette.title).tag(palette)
+                        }
                     }
                 }
                 Picker("Sampling", selection: $model.resolutionPolicy) {
@@ -312,6 +314,8 @@ private struct InspectorView: View {
                 }
                 .accessibilityIdentifier("resolution-policy-picker")
                 Toggle("Grid lines", isOn: $model.showGrid)
+                Toggle("Map annotations", isOn: $model.showMapAnnotations)
+                    .accessibilityIdentifier("map-annotations-toggle")
             }
         }
     }

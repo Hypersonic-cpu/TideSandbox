@@ -195,6 +195,7 @@ enum ScalarRasterizer {
         height: Int,
         signed: Bool,
         palette: ColorPalette,
+        range: ScalarRange? = nil,
         policy: DisplayResolutionPolicy,
         targetPixelSize: CGSize? = nil
     ) -> CGImage? {
@@ -225,18 +226,18 @@ enum ScalarRasterizer {
             policy: policy
         ) else { return nil }
 
-        let range = ScalarRange.finiteRange(of: engineValues, signed: signed)
+        let resolvedRange = range ?? ScalarRange.finiteRange(of: engineValues, signed: signed)
         let lookup = (0..<256).map { index in
             let t = Float(index) / 255
-            let value = range.minimum + (range.maximum - range.minimum) * t
-            return ColorMap.map(value, range: range, palette: palette)
+            let value = resolvedRange.minimum + (resolvedRange.maximum - resolvedRange.minimum) * t
+            return ColorMap.map(value, range: resolvedRange, palette: palette)
         }
-        let denominator = range.maximum - range.minimum
+        let denominator = resolvedRange.maximum - resolvedRange.minimum
         var pixels = [UInt8](repeating: 0, count: outputWidth * outputHeight * 4)
         for (index, value) in sampled.enumerated() {
             let color: RGBA
             if value.isFinite, denominator > 0 {
-                let normalized = max(0, min((value - range.minimum) / denominator, 1))
+                let normalized = max(0, min((value - resolvedRange.minimum) / denominator, 1))
                 color = lookup[Int((normalized * 255).rounded())]
             } else if value.isFinite {
                 color = lookup[128]
@@ -267,19 +268,21 @@ enum ScalarRasterizer {
     }
 }
 
-enum MaterialRasterizer {
+enum DecorativeCompositeRasterizer {
     static func image(
         bedElevation: [Float],
         waterDepth: [Float],
         width: Int,
         height: Int,
+        configuration: DecorativeMapConfiguration,
         policy: DisplayResolutionPolicy,
         targetPixelSize: CGSize? = nil
     ) -> CGImage? {
         guard width > 0,
               height > 0,
               bedElevation.count == width * height,
-              waterDepth.count == width * height else { return nil }
+              waterDepth.count == width * height,
+              configuration.isValid else { return nil }
         let outputWidth: Int
         let outputHeight: Int
         if policy == .identicalCells {
@@ -313,16 +316,36 @@ enum MaterialRasterizer {
             policy: policy
         ) else { return nil }
 
-        let bedRange = ScalarRange.finiteRange(of: bedElevation)
-        let observedMaximumDepth = waterDepth.lazy.filter(\.isFinite).max() ?? 0
-        let waterReferenceDepth = max(observedMaximumDepth, 2)
         var pixels = [UInt8](repeating: 0, count: outputWidth * outputHeight * 4)
         for index in sampledBed.indices {
-            let color = ColorMap.material(
+            let isWet = sampledDepth[index].isFinite &&
+                        sampledDepth[index] > configuration.visualWetThreshold
+            let row = index / outputWidth
+            let column = index % outputWidth
+            var wetEdge = false
+            var dryEdge = false
+            for (neighborColumn, neighborRow) in [
+                (column - 1, row), (column + 1, row),
+                (column, row - 1), (column, row + 1),
+            ] where neighborColumn >= 0 && neighborColumn < outputWidth &&
+                    neighborRow >= 0 && neighborRow < outputHeight {
+                let neighborDepth = sampledDepth[neighborRow * outputWidth + neighborColumn]
+                let neighborWet = neighborDepth.isFinite &&
+                                  neighborDepth > configuration.visualWetThreshold
+                wetEdge = wetEdge || (isWet && !neighborWet)
+                dryEdge = dryEdge || (!isWet && neighborWet)
+            }
+            let baseColor = ColorMap.decorativeComposite(
                 bedElevation: sampledBed[index],
                 waterDepth: sampledDepth[index],
-                bedRange: bedRange,
-                waterReferenceDepth: waterReferenceDepth
+                configuration: configuration
+            )
+            let color = ColorMap.decorativeShoreline(
+                baseColor,
+                isWet: isWet,
+                wetEdge: wetEdge,
+                dryEdge: dryEdge,
+                configuration: configuration
             )
             let destination = index * 4
             pixels[destination] = color.red

@@ -532,7 +532,7 @@ Required:
 
 # Phase 5 — 2D-only natural composite rendering, legends, and scale bar
 
-- [ ] **5.1 Add two distinct 2D display modes: decorative composite and quantitative scalar views.**
+- [x] **5.1 Add two distinct 2D display modes: decorative composite and quantitative scalar views.**
 
 This entire Phase applies only to `MosaicGridView`, `MosaicRaster`, `ScalarRasterizer`, 2D color mapping, and 2D annotation overlays.
 
@@ -563,7 +563,7 @@ Rules:
 - Other existing scalar views remain unchanged.
 - Decorative composite color is not claimed to encode water depth uniquely because it depends on both bed elevation and water depth.
 
-- [ ] **5.2 Implement a three-layer decorative composite renderer for 2D only.**
+- [x] **5.2 Implement a three-layer decorative composite renderer for 2D only.**
 
 The final color is composed from:
 
@@ -674,7 +674,7 @@ C = CLand
 
 No water optical overlay is applied.
 
-- [ ] **5.3 Add independent shoreline detection and a two-sided shoreline treatment in 2D only.**
+- [x] **5.3 Add independent shoreline detection and a two-sided shoreline treatment in 2D only.**
 
 Shoreline clarity must not depend solely on water opacity.
 
@@ -735,7 +735,7 @@ Requirements:
 - in resampled modes, preserve approximately 1–2 display pixels of shoreline emphasis where practical;
 - shoreline decoration is visual-only and never feeds back into wet/dry solver logic.
 
-- [ ] **5.4 Define stable decorative rendering parameters and range behavior.**
+- [x] **5.4 Define stable decorative rendering parameters and range behavior.**
 
 Add a compact renderer configuration containing:
 
@@ -762,7 +762,7 @@ Rules:
 - invalid values use an unmistakable debug color and bypass decorative blending;
 - values outside configured ranges clamp to gradient endpoints.
 
-- [ ] **5.5 Add 2D legends that correctly distinguish decorative and quantitative meaning.**
+- [x] **5.5 Add 2D legends that correctly distinguish decorative and quantitative meaning.**
 
 One overlay toggle controls all map annotations.
 
@@ -783,7 +783,7 @@ Legend values must use the same configured ranges as the renderer.
 
 Do not imply that a single decorative-composite pixel color can be inverted to one exact water depth.
 
-- [ ] **5.6 Add a physical horizontal scale bar to the 2D map only.**
+- [x] **5.6 Add a physical horizontal scale bar to the 2D map only.**
 
 Length-bar algorithm:
 

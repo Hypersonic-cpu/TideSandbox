@@ -174,7 +174,7 @@ struct SimulationSnapshot: Sendable {
 
     func values(for mode: DisplayMode) -> [Float] {
         switch mode {
-        case .materialState: waterDepth
+        case .decorativeComposite: waterDepth
         case .bedElevation: bedElevation
         case .waterDepth: waterDepth
         case .surfaceElevation: surfaceElevation

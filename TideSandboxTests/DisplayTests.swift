@@ -79,64 +79,189 @@ final class DisplayTests: XCTestCase {
         )
     }
 
-    func testMaterialStateHasScientificWetDryVisualTransitions() throws {
-        let bedRange = ScalarRange(minimum: 0, maximum: 1)
-        let deep = ColorMap.material(
-            bedElevation: 0,
-            waterDepth: 2,
-            bedRange: bedRange,
-            waterReferenceDepth: 2
+    func testDecorativeCompositeUsesOpticalWaterAndTwoSidedShorelines() throws {
+        let configuration = DecorativeMapConfiguration(
+            landElevationMinimum: 0,
+            landElevationMaximum: 1,
+            waterDepthMaximum: 2,
+            hClear: 0.6,
+            hShallow: 0.1,
+            hDeep: 1.7,
+            hShallowAccent: 0.3,
+            visualWetThreshold: 0.01,
+            shoreHighlightStrength: 0.35,
+            wetSandStrength: 0.2,
+            autoRangeEnabled: false
         )
-        let shallow = ColorMap.material(
+        XCTAssertTrue(configuration.isValid)
+        XCTAssertEqual(ColorMap.terrainBase(0, configuration: configuration), ColorMap.landLow)
+        XCTAssertEqual(ColorMap.terrainBase(1, configuration: configuration), ColorMap.landHigh)
+        let middleLand = ColorMap.terrainBase(0.5, configuration: configuration)
+        XCTAssertGreaterThan(middleLand.red, 180)
+        XCTAssertGreaterThan(middleLand.green, 180)
+        XCTAssertGreaterThan(middleLand.blue, 140)
+        XCTAssertEqual(ColorMap.waterOpticalOpacity(depth: 0, configuration: configuration), 0)
+        XCTAssertGreaterThan(
+            ColorMap.waterOpticalOpacity(depth: 0.2, configuration: configuration), 0
+        )
+        XCTAssertLessThan(
+            ColorMap.waterOpticalOpacity(depth: 0.2, configuration: configuration),
+            ColorMap.waterOpticalOpacity(depth: 1.5, configuration: configuration)
+        )
+        let dry = ColorMap.decorativeComposite(
             bedElevation: 0.5,
-            waterDepth: 0.125,
-            bedRange: bedRange,
-            waterReferenceDepth: 2
-        )
-        let lowDry = ColorMap.material(
-            bedElevation: 0,
             waterDepth: 0,
-            bedRange: bedRange,
-            waterReferenceDepth: 2
+            configuration: configuration
         )
-        let highDry = ColorMap.material(
-            bedElevation: 1,
-            waterDepth: 0,
-            bedRange: bedRange,
-            waterReferenceDepth: 2
+        let shallow = ColorMap.decorativeComposite(
+            bedElevation: 0.5,
+            waterDepth: 0.08,
+            configuration: configuration
         )
-        XCTAssertEqual(deep, RGBA(red: 8, green: 68, blue: 120, alpha: 255))
-        XCTAssertEqual(lowDry, RGBA(red: 94, green: 142, blue: 76, alpha: 255))
-        XCTAssertEqual(highDry, RGBA(red: 218, green: 193, blue: 105, alpha: 255))
-        XCTAssertGreaterThan(shallow.red, deep.red)
-        XCTAssertGreaterThan(shallow.green, deep.green)
-        XCTAssertGreaterThan(shallow.blue, deep.blue)
+        let deep = ColorMap.decorativeComposite(
+            bedElevation: 0.5,
+            waterDepth: 2,
+            configuration: configuration
+        )
+        XCTAssertEqual(dry, middleLand)
+        XCTAssertNotEqual(shallow, dry, "shallow water retains but does not replace bed color")
+        XCTAssertLessThan(deep.red, shallow.red)
+        XCTAssertLessThan(deep.green, shallow.green)
+        XCTAssertLessThan(deep.blue, shallow.blue)
+        XCTAssertEqual(
+            ColorMap.decorativeComposite(
+                bedElevation: .nan,
+                waterDepth: 1,
+                configuration: configuration
+            ),
+            ColorMap.invalid
+        )
 
+        var bed = [Float](repeating: 0.5, count: 25)
+        var depth = [Float](repeating: 0, count: 25)
+        for row in 1...3 {
+            for column in 1...3 {
+                depth[row * 5 + column] = 1
+            }
+        }
         let snapshot = SimulationSnapshot(
-            width: 4,
-            height: 1,
-            domainWidth: 4,
-            domainHeight: 1,
-            bedElevation: [0, 0.5, 1, 0.5],
-            waterDepth: [2, 0.125, 0, 0.01],
-            surfaceElevation: [2, 0.625, 1, 0.51],
-            surfaceDeviation: [0, 0, 0, 0],
-            velocityMagnitude: [0, 0, 0, 0],
-            wetMask: [1, 1, 0, 1],
+            width: 5,
+            height: 5,
+            domainWidth: 5,
+            domainHeight: 5,
+            bedElevation: bed,
+            waterDepth: depth,
+            surfaceElevation: zip(bed, depth).map { $0 + $1 },
+            surfaceDeviation: [Float](repeating: 0, count: 25),
+            velocityMagnitude: [Float](repeating: 0, count: 25),
+            wetMask: depth.map { $0 > configuration.visualWetThreshold ? 1 : 0 },
             diagnostics: .empty
         )
         let image = try XCTUnwrap(MosaicRaster.image(
             snapshot: snapshot,
-            mode: .materialState,
-            palette: .grayscale
+            mode: .decorativeComposite,
+            palette: .grayscale,
+            decorativeConfiguration: configuration
         ))
         let providerData = try XCTUnwrap(image.dataProvider?.data)
         let bytes = try XCTUnwrap(CFDataGetBytePtr(providerData))
-        XCTAssertEqual(Array(UnsafeBufferPointer(start: bytes, count: 4)),
-                       [deep.red, deep.green, deep.blue, deep.alpha])
-        XCTAssertEqual(Array(UnsafeBufferPointer(start: bytes + 8, count: 4)),
-                       [highDry.red, highDry.green, highDry.blue, highDry.alpha])
-        XCTAssertGreaterThan(bytes[12], deep.red, "newly wetted terrain is immediately pale")
+        func pixel(_ column: Int, _ row: Int) -> RGBA {
+            let offset = (row * 5 + column) * 4
+            return RGBA(red: bytes[offset], green: bytes[offset + 1],
+                        blue: bytes[offset + 2], alpha: bytes[offset + 3])
+        }
+        let wetInterior = ColorMap.decorativeComposite(
+            bedElevation: 0.5, waterDepth: 1, configuration: configuration
+        )
+        XCTAssertEqual(pixel(2, 2), wetInterior)
+        let wetEdge = ColorMap.decorativeShoreline(
+            wetInterior, isWet: true, wetEdge: true, dryEdge: false, configuration: configuration
+        )
+        XCTAssertEqual(pixel(1, 2), wetEdge)
+        let dryBase = ColorMap.decorativeComposite(
+            bedElevation: 0.5, waterDepth: 0, configuration: configuration
+        )
+        let dryEdge = ColorMap.decorativeShoreline(
+            dryBase, isWet: false, wetEdge: false, dryEdge: true, configuration: configuration
+        )
+        XCTAssertEqual(pixel(0, 2), dryEdge)
+        XCTAssertEqual(pixel(0, 0), dryBase)
+        XCTAssertGreaterThan(pixel(1, 2).red, 40, "shoreline uses a light cyan, never a dark outline")
+
+        bed = [Float](repeating: 0.5, count: 9)
+        depth = [Float](repeating: 0, count: 9)
+        for (column, row) in [(1, 1), (0, 1), (2, 1), (1, 0), (1, 2)] {
+            depth[row * 3 + column] = 1
+        }
+        let diagonalOnly = try XCTUnwrap(DecorativeCompositeRasterizer.image(
+            bedElevation: bed,
+            waterDepth: depth,
+            width: 3,
+            height: 3,
+            configuration: configuration,
+            policy: .identicalCells
+        ))
+        let diagonalData = try XCTUnwrap(diagonalOnly.dataProvider?.data)
+        let diagonalBytes = try XCTUnwrap(CFDataGetBytePtr(diagonalData))
+        let centerOffset = (1 * 3 + 1) * 4
+        XCTAssertEqual(
+            RGBA(red: diagonalBytes[centerOffset], green: diagonalBytes[centerOffset + 1],
+                 blue: diagonalBytes[centerOffset + 2], alpha: diagonalBytes[centerOffset + 3]),
+            wetInterior,
+            "diagonal-only dry contact does not create a 4-neighbor shoreline"
+        )
+    }
+
+    func testDecorativeLegendRangesAndScaleBarUseStableConfiguration() throws {
+        let configuration = DecorativeMapConfiguration(
+            landElevationMinimum: -2,
+            landElevationMaximum: 6,
+            waterDepthMaximum: 4,
+            hClear: 1.2,
+            hShallow: 0.2,
+            hDeep: 3.4,
+            hShallowAccent: 0.6,
+            visualWetThreshold: 1.0e-6,
+            shoreHighlightStrength: 0.35,
+            wetSandStrength: 0.2,
+            autoRangeEnabled: false
+        )
+        let snapshot = SimulationSnapshot(
+            width: 2,
+            height: 1,
+            domainWidth: 2,
+            domainHeight: 1,
+            bedElevation: [0, 0],
+            waterDepth: [0, 2],
+            surfaceElevation: [0, 2],
+            surfaceDeviation: [0, 0],
+            velocityMagnitude: [0, 0],
+            wetMask: [0, 1],
+            diagnostics: .empty
+        )
+        let image = try XCTUnwrap(MosaicRaster.image(
+            snapshot: snapshot,
+            mode: .waterDepth,
+            palette: .blueWhite,
+            decorativeConfiguration: configuration
+        ))
+        let providerData = try XCTUnwrap(image.dataProvider?.data)
+        let bytes = try XCTUnwrap(CFDataGetBytePtr(providerData))
+        XCTAssertEqual(
+            RGBA(red: bytes[4], green: bytes[5], blue: bytes[6], alpha: bytes[7]),
+            ColorMap.map(2, range: ScalarRange(minimum: 0, maximum: 4), palette: .blueWhite)
+        )
+        let specification = try XCTUnwrap(MapScaleBarSpecification.make(
+            domainWidth: 1_000,
+            displayedWidth: 1_000
+        ))
+        XCTAssertEqual(specification.lengthMeters, 200)
+        XCTAssertEqual(specification.widthFraction, 0.2)
+        XCTAssertEqual(specification.midpointLabel, "100 m")
+        XCTAssertEqual(specification.endpointLabel, "200 m")
+        XCTAssertTrue([1, 2, 5].contains(
+            specification.lengthMeters / pow(10, floor(log10(specification.lengthMeters)))
+        ))
     }
 
     func testRasterUsesOneUninterpolatedPixelPerCellAndFlipsOnlyDisplayAxis() throws {

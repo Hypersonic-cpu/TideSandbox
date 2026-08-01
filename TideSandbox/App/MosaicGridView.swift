@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import SwiftUI
 
 struct MosaicGridView: View {
@@ -20,6 +21,7 @@ struct MosaicGridView: View {
                     snapshot: model.snapshot,
                     mode: model.displayMode,
                     palette: model.palette,
+                    decorativeConfiguration: model.decorativeMapConfiguration,
                     policy: model.resolutionPolicy,
                     targetPixelSize: CGSize(
                         width: mapping.contentFrame.width * displayScale,
@@ -32,6 +34,20 @@ struct MosaicGridView: View {
                         .frame(width: mapping.contentFrame.width, height: mapping.contentFrame.height)
                         .position(x: mapping.contentFrame.midX, y: mapping.contentFrame.midY)
                     overlay(mapping: mapping)
+                    if model.showMapAnnotations {
+                        MapAnnotationsOverlay(
+                            mode: model.displayMode,
+                            configuration: model.decorativeMapConfiguration,
+                            domainWidth: model.snapshot.domainWidth,
+                            displayedWidth: mapping.contentFrame.width
+                        )
+                        .frame(
+                            width: mapping.contentFrame.width,
+                            height: mapping.contentFrame.height
+                        )
+                        .position(x: mapping.contentFrame.midX, y: mapping.contentFrame.midY)
+                        .allowsHitTesting(false)
+                    }
                 } else {
                     ProgressView()
                 }
@@ -140,20 +156,178 @@ struct MosaicGridView: View {
     }
 }
 
+struct MapScaleBarSpecification: Equatable, Sendable {
+    let lengthMeters: Double
+    let widthFraction: Double
+    let midpointLabel: String
+    let endpointLabel: String
+
+    static func make(domainWidth: Double, displayedWidth: CGFloat) -> MapScaleBarSpecification? {
+        guard domainWidth.isFinite, domainWidth > 0,
+              displayedWidth.isFinite, displayedWidth > 0 else { return nil }
+        let targetLength = domainWidth * 0.28
+        let exponent = floor(log10(targetLength))
+        let power = pow(10, exponent)
+        let multiplier = [5.0, 2.0, 1.0].first { $0 * power <= targetLength } ?? 1.0
+        let length = multiplier * power
+        guard length > 0, length <= domainWidth else { return nil }
+        return MapScaleBarSpecification(
+            lengthMeters: length,
+            widthFraction: length / domainWidth,
+            midpointLabel: label(for: length / 2),
+            endpointLabel: label(for: length)
+        )
+    }
+
+    private static func label(for meters: Double) -> String {
+        if meters >= 1_000 {
+            return String(format: meters.truncatingRemainder(dividingBy: 1_000) == 0
+                          ? "%.0f km" : "%.1f km", meters / 1_000)
+        }
+        return String(format: meters.rounded() == meters ? "%.0f m" : "%.1f m", meters)
+    }
+}
+
+private struct MapAnnotationsOverlay: View {
+    let mode: DisplayMode
+    let configuration: DecorativeMapConfiguration
+    let domainWidth: Double
+    let displayedWidth: CGFloat
+
+    var body: some View {
+        GeometryReader { proxy in
+            VStack(alignment: .leading, spacing: 8) {
+                if mode == .decorativeComposite {
+                    decorativeLegend
+                } else if mode == .waterDepth {
+                    quantitativeWaterLegend
+                }
+                Spacer(minLength: 0)
+                if let specification = MapScaleBarSpecification.make(
+                    domainWidth: domainWidth,
+                    displayedWidth: displayedWidth
+                ) {
+                    scaleBar(specification, availableWidth: proxy.size.width)
+                }
+            }
+            .padding(10)
+            .padding(.top, 82)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("map-annotations-overlay")
+    }
+
+    private var decorativeLegend: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("Land elevation")
+                .font(.caption.weight(.semibold))
+            legendStrip([ColorMap.landLow, ColorMap.landMiddle, ColorMap.landHigh])
+            HStack {
+                Text(valueLabel(configuration.landElevationMinimum))
+                Spacer()
+                Text(valueLabel(configuration.landElevationMaximum))
+            }
+            .font(.caption2)
+            Text("Water depth")
+                .font(.caption.weight(.semibold))
+            legendStrip([
+                ColorMap.waterVeryShallow, ColorMap.waterShallow,
+                ColorMap.waterMedium, ColorMap.waterDeep,
+            ])
+            HStack {
+                Text("0 m")
+                Spacer()
+                Text(valueLabel(configuration.waterDepthMaximum))
+            }
+            .font(.caption2)
+            HStack(spacing: 6) {
+                Circle().fill(ColorMap.wetSand.color).frame(width: 10, height: 10)
+                Text("Wet sand")
+                Circle().fill(ColorMap.shoreCyan.color).frame(width: 10, height: 10)
+                Text("Water edge")
+            }
+            .font(.caption2)
+            Text("Shallow water is translucent.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(7)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
+    }
+
+    private var quantitativeWaterLegend: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("Water depth (m)")
+                .font(.caption.weight(.semibold))
+            legendStrip([ColorMap.waterDeep, ColorMap.waterVeryShallow])
+            HStack {
+                Text("0 m")
+                Spacer()
+                Text(valueLabel(configuration.waterDepthMaximum))
+            }
+            .font(.caption2)
+        }
+        .padding(7)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
+    }
+
+    private func legendStrip(_ colors: [RGBA]) -> some View {
+        LinearGradient(
+            colors: colors.map(\.color),
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+        .frame(width: 142, height: 10)
+        .clipShape(RoundedRectangle(cornerRadius: 3))
+    }
+
+    private func scaleBar(_ specification: MapScaleBarSpecification,
+                          availableWidth: CGFloat) -> some View {
+        let lineWidth = max(1, min(availableWidth * CGFloat(specification.widthFraction),
+                                   availableWidth * 0.35))
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 0) {
+                Text("0").frame(width: 12, alignment: .leading)
+                Spacer(minLength: 0)
+                Text(specification.midpointLabel)
+                Spacer(minLength: 0)
+                Text(specification.endpointLabel)
+            }
+            .font(.caption2)
+            .frame(width: lineWidth)
+            HStack(spacing: 0) {
+                Rectangle().fill(.primary).frame(width: 1, height: 8)
+                Rectangle().fill(.primary).frame(height: 2)
+                Rectangle().fill(.primary).frame(width: 1, height: 8)
+            }
+            .frame(width: lineWidth, height: 8)
+        }
+        .padding(7)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
+        .accessibilityLabel("Scale bar from 0 to \(specification.endpointLabel)")
+    }
+
+    private func valueLabel(_ value: Float) -> String {
+        String(format: abs(value) >= 10 ? "%.0f m" : "%.2g m", value)
+    }
+}
+
 enum MosaicRaster {
     static func image(
         snapshot: SimulationSnapshot,
         mode: DisplayMode,
         palette: ColorPalette,
+        decorativeConfiguration: DecorativeMapConfiguration = .default,
         policy: DisplayResolutionPolicy = .identicalCells,
         targetPixelSize: CGSize? = nil
     ) -> CGImage? {
-        if mode == .materialState {
-            return MaterialRasterizer.image(
+        if mode == .decorativeComposite {
+            return DecorativeCompositeRasterizer.image(
                 bedElevation: snapshot.bedElevation,
                 waterDepth: snapshot.waterDepth,
                 width: snapshot.width,
                 height: snapshot.height,
+                configuration: decorativeConfiguration,
                 policy: policy,
                 targetPixelSize: targetPixelSize
             )
@@ -164,6 +338,9 @@ enum MosaicRaster {
             height: snapshot.height,
             signed: mode == .surfaceDeviation,
             palette: palette,
+            range: mode == .waterDepth
+                ? ScalarRange(minimum: 0, maximum: decorativeConfiguration.waterDepthMaximum)
+                : nil,
             policy: policy,
             targetPixelSize: targetPixelSize
         )

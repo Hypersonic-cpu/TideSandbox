@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 
 enum DisplayMode: String, CaseIterable, Identifiable, Sendable {
-    case materialState
+    case decorativeComposite
     case bedElevation
     case waterDepth
     case surfaceElevation
@@ -14,7 +14,7 @@ enum DisplayMode: String, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .materialState: "Material state"
+        case .decorativeComposite: "Decorative composite"
         case .bedElevation: "Bed"
         case .waterDepth: "Water depth"
         case .surfaceElevation: "Surface"
@@ -26,7 +26,7 @@ enum DisplayMode: String, CaseIterable, Identifiable, Sendable {
 
     var preferredPalette: ColorPalette {
         switch self {
-        case .materialState: .blueWhite
+        case .decorativeComposite: .blueWhite
         case .bedElevation: .sand
         case .waterDepth, .surfaceElevation, .velocityMagnitude: .blueWhite
         case .surfaceDeviation: .diverging
@@ -96,37 +96,167 @@ struct RGBA: Equatable, Sendable {
     }
 }
 
+struct DecorativeMapConfiguration: Equatable, Sendable {
+    let landElevationMinimum: Float
+    let landElevationMaximum: Float
+    let waterDepthMaximum: Float
+    let hClear: Float
+    let hShallow: Float
+    let hDeep: Float
+    let hShallowAccent: Float
+    let visualWetThreshold: Float
+    let shoreHighlightStrength: Float
+    let wetSandStrength: Float
+    let autoRangeEnabled: Bool
+
+    static let `default` = DecorativeMapConfiguration(
+        landElevationMinimum: -1,
+        landElevationMaximum: 1,
+        waterDepthMaximum: 2,
+        hClear: 0.6,
+        hShallow: 0.1,
+        hDeep: 2,
+        hShallowAccent: 0.25,
+        visualWetThreshold: 1.0e-6,
+        shoreHighlightStrength: 0.35,
+        wetSandStrength: 0.2,
+        autoRangeEnabled: false
+    )
+
+    static func stableScene(
+        bedElevation: [Float],
+        waterDepth: [Float],
+        visualWetThreshold: Float = 1.0e-6
+    ) -> DecorativeMapConfiguration {
+        let bedRange = ScalarRange.finiteRange(of: bedElevation)
+        let representativeDepth = max(
+            waterDepth.lazy.filter { $0.isFinite && $0 >= 0 }.max() ?? 0,
+            0.1
+        )
+        return DecorativeMapConfiguration(
+            landElevationMinimum: bedRange.minimum,
+            landElevationMaximum: bedRange.maximum,
+            waterDepthMaximum: representativeDepth,
+            hClear: representativeDepth * 0.3,
+            hShallow: representativeDepth * 0.05,
+            hDeep: representativeDepth * 0.85,
+            hShallowAccent: representativeDepth * 0.15,
+            visualWetThreshold: max(visualWetThreshold, 0),
+            shoreHighlightStrength: 0.35,
+            wetSandStrength: 0.2,
+            autoRangeEnabled: false
+        )
+    }
+
+    var isValid: Bool {
+        landElevationMinimum.isFinite && landElevationMaximum.isFinite &&
+        landElevationMaximum > landElevationMinimum &&
+        waterDepthMaximum.isFinite && waterDepthMaximum > 0 &&
+        hClear.isFinite && hClear > 0 &&
+        hShallow.isFinite && hDeep.isFinite && hDeep > hShallow &&
+        hShallowAccent.isFinite && hShallowAccent > 0 &&
+        visualWetThreshold.isFinite && visualWetThreshold >= 0 &&
+        shoreHighlightStrength.isFinite && (0...1).contains(shoreHighlightStrength) &&
+        wetSandStrength.isFinite && (0...1).contains(wetSandStrength)
+    }
+}
+
 enum ColorMap {
     static let invalid = RGBA(red: 255, green: 0, blue: 220, alpha: 255)
+    static let landLow = RGBA(red: 0xE8, green: 0xD6, blue: 0xA5, alpha: 255)
+    static let landMiddle = RGBA(red: 0xD8, green: 0xD7, blue: 0xA0, alpha: 255)
+    static let landHigh = RGBA(red: 0xB7, green: 0xD2, blue: 0xA2, alpha: 255)
+    static let submergedBed = RGBA(red: 0xD4, green: 0xE6, blue: 0xE4, alpha: 255)
+    static let waterVeryShallow = RGBA(red: 0xBD, green: 0xEB, blue: 0xED, alpha: 255)
+    static let waterShallow = RGBA(red: 0x85, green: 0xD3, blue: 0xDC, alpha: 255)
+    static let waterMedium = RGBA(red: 0x55, green: 0x9F, blue: 0xC8, alpha: 255)
+    static let waterDeep = RGBA(red: 0x2D, green: 0x6F, blue: 0xA7, alpha: 255)
+    static let turquoiseAccent = RGBA(red: 0x77, green: 0xD8, blue: 0xD0, alpha: 255)
+    static let shoreCyan = RGBA(red: 0xD3, green: 0xF4, blue: 0xF1, alpha: 255)
+    static let wetSand = RGBA(red: 0xD3, green: 0xC2, blue: 0x8F, alpha: 255)
 
-    static func material(
+    static func decorativeComposite(
         bedElevation: Float,
         waterDepth: Float,
-        bedRange: ScalarRange,
-        waterReferenceDepth: Float
+        configuration: DecorativeMapConfiguration
     ) -> RGBA {
         guard bedElevation.isFinite,
               waterDepth.isFinite,
               waterDepth >= 0,
-              waterReferenceDepth.isFinite,
-              waterReferenceDepth > 0 else { return invalid }
-        if waterDepth > 0 {
-            let relativeDepth = Swift.max(0, Swift.min(waterDepth / waterReferenceDepth, 1))
-            return interpolate(
-                from: RGBA(red: 198, green: 226, blue: 238, alpha: 255),
-                to: RGBA(red: 8, green: 68, blue: 120, alpha: 255),
-                t: relativeDepth
+              configuration.isValid else { return invalid }
+        let land = terrainBase(bedElevation, configuration: configuration)
+        guard waterDepth > 0 else { return land }
+        let cooledBed = interpolateLinear(from: land, to: submergedBed, t: 0.15)
+        let water = waterGradient(depth: waterDepth, configuration: configuration)
+        let opacity = waterOpticalOpacity(depth: waterDepth, configuration: configuration)
+        let optical = interpolateLinear(from: cooledBed, to: water, t: opacity)
+        let shallowAccent = exp(-pow(waterDepth / configuration.hShallowAccent, 2)) * 0.16
+        return interpolateLinear(from: optical, to: turquoiseAccent, t: shallowAccent)
+    }
+
+    static func decorativeShoreline(
+        _ color: RGBA,
+        isWet: Bool,
+        wetEdge: Bool,
+        dryEdge: Bool,
+        configuration: DecorativeMapConfiguration
+    ) -> RGBA {
+        guard configuration.isValid else { return invalid }
+        if isWet && wetEdge {
+            return interpolateLinear(
+                from: color,
+                to: shoreCyan,
+                t: configuration.shoreHighlightStrength
             )
         }
-        let denominator = bedRange.maximum - bedRange.minimum
-        let normalized = denominator > 0
-            ? Swift.max(0, Swift.min((bedElevation - bedRange.minimum) / denominator, 1))
-            : 0.5
-        return interpolate(
-            from: RGBA(red: 94, green: 142, blue: 76, alpha: 255),
-            to: RGBA(red: 218, green: 193, blue: 105, alpha: 255),
-            t: normalized
+        if !isWet && dryEdge {
+            return interpolateLinear(from: color, to: wetSand, t: configuration.wetSandStrength)
+        }
+        return color
+    }
+
+    static func terrainBase(
+        _ bedElevation: Float,
+        configuration: DecorativeMapConfiguration
+    ) -> RGBA {
+        guard bedElevation.isFinite, configuration.isValid else { return invalid }
+        let normalized = clamp(
+            (bedElevation - configuration.landElevationMinimum) /
+            (configuration.landElevationMaximum - configuration.landElevationMinimum)
         )
+        if normalized <= 0.5 {
+            return interpolateLinear(from: landLow, to: landMiddle, t: normalized * 2)
+        }
+        return interpolateLinear(from: landMiddle, to: landHigh, t: (normalized - 0.5) * 2)
+    }
+
+    static func waterGradient(
+        depth: Float,
+        configuration: DecorativeMapConfiguration
+    ) -> RGBA {
+        guard depth.isFinite, depth >= 0, configuration.isValid else { return invalid }
+        let normalized = smoothstep(
+            configuration.hShallow,
+            configuration.hDeep,
+            clamp(depth / configuration.waterDepthMaximum) * configuration.waterDepthMaximum
+        )
+        if normalized <= 1 / 3 {
+            return interpolateLinear(from: waterVeryShallow, to: waterShallow, t: normalized * 3)
+        }
+        if normalized <= 2 / 3 {
+            return interpolateLinear(from: waterShallow, to: waterMedium,
+                                     t: (normalized - 1 / 3) * 3)
+        }
+        return interpolateLinear(from: waterMedium, to: waterDeep,
+                                 t: (normalized - 2 / 3) * 3)
+    }
+
+    static func waterOpticalOpacity(
+        depth: Float,
+        configuration: DecorativeMapConfiguration
+    ) -> Float {
+        guard depth.isFinite, depth >= 0, configuration.isValid else { return .nan }
+        return 1 - exp(-depth / configuration.hClear)
     }
 
     static func map(_ value: Float, range: ScalarRange, palette: ColorPalette) -> RGBA {
@@ -176,6 +306,38 @@ enum ColorMap {
             blue: channel(from.blue, to.blue),
             alpha: 255
         )
+    }
+
+    private static func interpolateLinear(from: RGBA, to: RGBA, t: Float) -> RGBA {
+        let clamped = clamp(t)
+        if clamped == 0 { return from }
+        if clamped == 1 { return to }
+        func linear(_ component: UInt8) -> Float {
+            let srgb = Float(component) / 255
+            return srgb <= 0.04045 ? srgb / 12.92 : pow((srgb + 0.055) / 1.055, 2.4)
+        }
+        func srgb(_ component: Float) -> UInt8 {
+            let linear = clamp(component)
+            let encoded = linear <= 0.0031308
+                ? linear * 12.92
+                : 1.055 * pow(linear, 1 / 2.4) - 0.055
+            return byte(encoded)
+        }
+        return RGBA(
+            red: srgb(linear(from.red) + (linear(to.red) - linear(from.red)) * clamped),
+            green: srgb(linear(from.green) + (linear(to.green) - linear(from.green)) * clamped),
+            blue: srgb(linear(from.blue) + (linear(to.blue) - linear(from.blue)) * clamped),
+            alpha: 255
+        )
+    }
+
+    private static func smoothstep(_ minimum: Float, _ maximum: Float, _ value: Float) -> Float {
+        let normalized = clamp((value - minimum) / (maximum - minimum))
+        return normalized * normalized * (3 - 2 * normalized)
+    }
+
+    private static func clamp(_ value: Float) -> Float {
+        Swift.max(0, Swift.min(value, 1))
     }
 
     private static func byte(_ value: Float) -> UInt8 {

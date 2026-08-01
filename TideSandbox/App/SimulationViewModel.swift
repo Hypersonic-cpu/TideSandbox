@@ -80,7 +80,7 @@ final class SimulationViewModel: ObservableObject {
     @Published var showWetCellMask = false
     @Published var showCameraTarget = false
     @Published var selectedPreset: SimulationPreset = .centerBump32
-    @Published var displayMode: DisplayMode = .materialState
+    @Published var displayMode: DisplayMode = .decorativeComposite
     @Published var palette: ColorPalette = .blueWhite
     @Published var resolutionPolicy: DisplayResolutionPolicy = .identicalCells
     @Published var tool: TerrainTool = .inspect
@@ -100,6 +100,7 @@ final class SimulationViewModel: ObservableObject {
     @Published var saveStateSource: SaveStateSource = .initialState
     @Published var minimumBedElevation = SceneWorldLimits.defaults.minimumBedElevation
     @Published var maximumSurfaceElevation = SceneWorldLimits.defaults.maximumSurfaceElevation
+    @Published var showMapAnnotations = true
     @Published private(set) var polygonPoints: [CGPoint] = []
     @Published private(set) var brushPreviewPoint: CGPoint?
     @Published private(set) var currentScene: SceneDocument?
@@ -111,11 +112,17 @@ final class SimulationViewModel: ObservableObject {
     private var nextSnapshotGeneration: UInt64 = 1
     private var storedInitialBedElevation = [Float]()
     private var storedInitialWaterDepth = [Float]()
+    @Published private(set) var decorativeMapConfiguration = DecorativeMapConfiguration.default
 
     init() {
         let seed = SimulationPreset.centerBump32.makeSeed()
         storedInitialBedElevation = seed.bedElevation
         storedInitialWaterDepth = seed.waterDepth
+        decorativeMapConfiguration = DecorativeMapConfiguration.stableScene(
+            bedElevation: seed.bedElevation,
+            waterDepth: seed.waterDepth,
+            visualWetThreshold: 1.0e-6
+        )
         runtime = SimulationRuntime(seed: seed)
         runtime.setSnapshotHandler { [weak self] snapshot, initialStateChanged in
             Task { @MainActor [weak self] in
@@ -265,7 +272,7 @@ final class SimulationViewModel: ObservableObject {
         pause()
         resetCameraFraming()
         polygonPoints.removeAll(keepingCapacity: true)
-        displayMode = .materialState
+        displayMode = .decorativeComposite
         palette = displayMode.preferredPalette
         currentScene = nil
         isDirty = false
@@ -274,6 +281,11 @@ final class SimulationViewModel: ObservableObject {
         storedInitialWaterDepth = seed.waterDepth
         minimumBedElevation = seed.worldLimits.minimumBedElevation
         maximumSurfaceElevation = seed.worldLimits.maximumSurfaceElevation
+        decorativeMapConfiguration = DecorativeMapConfiguration.stableScene(
+            bedElevation: seed.bedElevation,
+            waterDepth: seed.waterDepth,
+            visualWetThreshold: Float(minimumWetDepth)
+        )
         runtime.load(seed)
     }
 
@@ -290,10 +302,15 @@ final class SimulationViewModel: ObservableObject {
         workerCount = document.manifest.solver.workerCount
         minimumBedElevation = document.manifest.resolvedWorldLimits.minimumBedElevation
         maximumSurfaceElevation = document.manifest.resolvedWorldLimits.maximumSurfaceElevation
-        displayMode = .materialState
+        displayMode = .decorativeComposite
         palette = displayMode.preferredPalette
         storedInitialBedElevation = document.bedElevation
         storedInitialWaterDepth = document.initialWaterDepth
+        decorativeMapConfiguration = DecorativeMapConfiguration.stableScene(
+            bedElevation: document.bedElevation,
+            waterDepth: document.initialWaterDepth,
+            visualWetThreshold: Float(minimumWetDepth)
+        )
         runtime.load(SceneSeed(
             width: document.manifest.gridWidth,
             height: document.manifest.gridHeight,
