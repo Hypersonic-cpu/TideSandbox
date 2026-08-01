@@ -1030,7 +1030,7 @@ Visual verification:
 
 # Phase 7 — Regression and documentation
 
-- [ ] **7.1 Run the complete test matrix and update CPU golden references only after review.**
+- [x] **7.1 Run the complete test matrix and update CPU golden references only after review.**
 
 Run:
 
@@ -1044,7 +1044,7 @@ Run:
 
 The shoreline change may legitimately change CPU fingerprints. Update them only after mathematical tests pass and the new pass behavior is recorded in `Docs/CPUReference.md` and `Docs/DesignDecisions.md`.
 
-- [ ] **7.2 Add/update documentation under `Docs/`.**
+- [x] **7.2 Add/update documentation under `Docs/`.**
 
 Create `Docs/TerrainEditingAndShoreline.md` covering:
 
@@ -1061,7 +1061,7 @@ Create `Docs/TerrainEditingAndShoreline.md` covering:
 - active-viewport-only rendering contract;
 - 2D/3D shared edit-state parity.
 
-- [ ] **7.3 Commit in small verified checkpoints.**
+- [x] **7.3 Commit in small verified checkpoints.**
 
 Suggested commits:
 

@@ -56,6 +56,29 @@ barrier. Row partitions execute the same kernel for one or many workers; the
 serial positivity correction remains ordered so its aggregate is deterministic.
 No solver substep allocates after construction.
 
+## Material edits and movable-shoreline review
+
+The terrain-modification work was reviewed against the same CPU reference in
+August 2026. A material command builds finite, bounded candidate bed/depth
+fields atomically. Initial-state edits replace reset data and restore zero time
+and velocity. Paused-current edits preserve time and mix each existing face
+velocity by retained connected depth divided by new connected depth. Both X and
+Y paths call the same mixing function on the same `FaceField` type.
+
+Solver faces now use hydrostatic connected-depth reconstruction over the higher
+adjacent bed. A high dry neighbor blocks flow, while low dry ground retains the
+downhill free-surface gradient and can be inundated. Donor upwinding consumes
+the reconstructed connected depth; the shared outgoing limiter and conservative
+continuity pass are unchanged. Details and edit-volume equations are fixed in
+`TerrainEditingAndShoreline.md`.
+
+The complete mathematical suite passed before the golden review: lake at rest,
+closed-domain conservation with explicit edit-volume accounting, nonnegativity,
+inundation, recession to exactly dry, high-ground blocking, paused momentum
+mixing, 512² resume, serial/parallel equality, and 10,000 edited-domain steps.
+The checked hashes below match the reviewed implementation, so no golden value
+changed at this final documentation checkpoint.
+
 ## Checked CPU golden states
 
 `Tools/GenerateCPUGolden.cc` constructs an algebraic uneven bed, a level lake

@@ -139,3 +139,58 @@ Inheritance remains limited to required framework substitution:
 `InteractiveMTKView` subclasses `MTKView` to receive AppKit pointer and keyboard
 events. Meshes, camera state, settings, and policies remain value structs or
 enums; no domain hierarchy or virtual abstraction is introduced.
+
+## DD-013 — Material edits are state transitions with explicit water accounting
+
+Terrain modification is expressed as one `MaterialEdit` over either the stored
+initial state or paused current state. Add/remove sand and add/remove water are
+not renderer gestures or arbitrary field writes; they are bounded atomic Engine
+commands with changed-cell/face counts, sand and water volume deltas, clamping,
+and wet/dry transitions.
+
+Initial edits intentionally use the ordinary reset path and therefore zero both
+same-typed velocity fields and time. Paused edits preserve time and use a single
+connected-depth velocity-mixing function for X and Y faces. Added water,
+including excavation fill, carries zero momentum. Removed water retains the
+velocity of connected remaining water. This keeps the velocity-form reference
+model internally consistent without pretending it stores conservative momentum.
+
+## DD-014 — Hydrostatic connected depth defines movable shorelines
+
+The old dry-neighbor special case is replaced by one face reconstruction over
+the higher adjacent bed. Connected depth and surface drive both the pressure
+gradient and donor-upwind flux. Two disconnected dry sides close the face; low
+dry ground can wet; high ground blocks. The existing shared donor limiter and
+conservative continuity update remain responsible for positivity and mass.
+
+The shoreline decision is therefore a property of the CPU solver pass, not a
+visual mask. The 2D decorative renderer independently detects four-neighbor
+wet/dry color edges only for legibility.
+
+## DD-015 — Decorative cartography is 2D-only and range-stable
+
+The default 2D map composites a pale land ramp, configured submerged-bed
+cooling, depth-dependent optical water in linear-light color space, and an
+independent two-sided shoreline treatment. Scene ranges are fixed on load so an
+edit does not cause unrelated colors to jump. Legends use those exact ranges
+and colors; a physical `1/2/5 × 10^n` scale bar shares one annotation toggle.
+
+This mode is deliberately distinct from quantitative scalar palettes and does
+not enter the Metal shaders. Existing 3D terrain/water materials, lighting,
+opacity, and debug modes retain their previous meanings.
+
+## DD-016 — 3D editing reuses the shared command path
+
+The 3D view does not own an editor. It unprojects the current camera ray, walks
+crossed regular-grid cells with 2D DDA, intersects visible terrain/water
+triangles, and forwards only the resulting physical horizontal coordinate to
+the same view-model/runtime command used by 2D. Mixed wet/dry water triangles
+accept a hit only where interpolated depth passes the renderer's wet threshold.
+There is no full-frame readback or per-drag all-triangle search.
+
+`InteractiveMTKView` uses framework inheritance because it genuinely is an
+`MTKView` with substitutable AppKit event behavior. Preview geometry lives in a
+neutral overlay layer. Committed bed/depth changes come only from Engine
+snapshots; unchanged grid dimensions reuse topology, allocation, pipelines, and
+camera. `SimulationViewport` remains a real switch, with DEBUG-only counters
+proving the inactive renderer performs no work.

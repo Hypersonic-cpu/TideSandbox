@@ -423,3 +423,50 @@ macOS Accessibility authorization mid-suite. The same current signed test
 bundle had just passed the strengthened scenario, and no product source changed
 after the successful 14/14 run. At the user's direction, the permission-blocked
 duplicate rerun was bypassed rather than reported as a product failure.
+
+## 2026-08-01 — Material terrain editing and movable shoreline complete
+
+- Added one authoritative Engine material-command path for add/remove sand and
+  add/remove water in initial and paused-current contexts. Edits validate and
+  commit atomically, return explicit sand/water volume deltas and wet/dry counts,
+  preserve or reset time according to target, and use the same `FaceField`
+  velocity-mixing routine for X and Y directions.
+- Replaced the fixed dry-neighbor rule with hydrostatic connected-depth face
+  reconstruction. Low dry terrain can inundate, high terrain blocks, recession
+  reaches exact dryness, donor limiting remains conservative, and closed-domain
+  tests account for every material edit before comparing long-run volume.
+- Added the range-stable 2D decorative terrain/water composite, two-sided
+  shoreline colors, matching legends, and physical scale bar. These remain
+  strictly 2D presentation features and do not alter the 3D material style.
+- Enabled shared editing in the Metal viewport through deterministic camera-ray
+  unprojection, regular-grid DDA, and visible triangle intersection. Brush and
+  polygon previews use a neutral overlay; value-only snapshots reuse topology,
+  scalar allocation, pipelines, and camera. A real Swift viewport switch and
+  DEBUG-only counters prove the inactive renderer performs no work.
+- Added exact Engine and Swift parity tests, actual Metal-buffer tests, picker
+  tests at 16²/32²/128²/512² and every preset, shoreline invariants, a 512²
+  edited-resume case, and a 32² four-worker 10,000-step conservation test.
+- Reviewed CPU fingerprints after the mathematical suite passed. The checked
+  depth, X-velocity, and Y-velocity hashes remain unchanged; their derivation and
+  the shoreline pass are recorded in `CPUReference.md` and
+  `DesignDecisions.md`.
+- Automated XCUITest—not manual mouse control—performed 3D brush editing,
+  polygon picking and Apply, yaw/pitch changes, 2D/3D shared-state switching,
+  annotation toggling, and screenshot capture. Retained images were visually
+  checked for bounded brush footprint, polygon preview, dry water removal,
+  committed relief, shared 2D shoreline state, and preserved camera.
+
+Verification:
+
+```text
+Complete Debug unit XCTest:             55/55 passed, 132.417 s
+Complete Release unit XCTest:           55/55 passed, 74.011 s
+AddressSanitizer unit XCTest:            55/55 passed, 178.067 s
+Focused ThreadSanitizer scientific case:  1/1 passed, 52.760 s
+TSan case size/work:                     32², 4 workers, 10,000 steps
+Required ordinary grid coverage:         16², 32², 128², 512²
+Focused automated 3D editing UI test:     1/1 passed, 31.918 s
+Focused automated annotation UI test:     1/1 passed
+CPU golden fingerprint review:           passed; hashes unchanged
+git diff --check:                         passed
+```
